@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>body,html{height:100vh;width:100vw;margin:0;padding:0;overflow:hidden;background-color:#1e1e1e}</style>
+  <script>
+    window._sharedBufferListeners = [];
+    window.chrome = {
+      webview: {
+        addEventListener: function(event, callback) {
+          if (event === 'sharedbufferreceived') {
+            window._sharedBufferListeners.push(callback);
+          }
+        },
+        removeEventListener: function(event, callback) {
+          window._sharedBufferListeners = window._sharedBufferListeners.filter(cb => cb !== callback);
+        },
+        hostObjects: { sync: {} }
+      }
+    };
+    window.hvcEvents = {
+      notifyOnTelemetry: function(e, t) {},
+      notifyOnReady: function() {
+        console.log('>>> [BRIDGE] notifyOnReady fired!');
+        setTimeout(sendTestImage, 500);
+      },
+      notifyOnUserSave: function(e, bytesLen, a, l) {
+        console.log('>>> [BRIDGE] notifyOnUserSave fired!', e, bytesLen);
+      },
+      notifyOnUserClose: function() { console.log('>>> [BRIDGE] notifyOnUserClose'); },
+      notifyOnDebugLog: function(msg) { console.log('>>> [BRIDGE DEBUG]:', msg); },
+      notifyOnError: function(e, t) { console.error('>>> [BRIDGE ERROR]:', e, t); },
+      notifyOnThumbnailLoaded: function() { console.log('>>> [BRIDGE] notifyOnThumbnailLoaded'); },
+      notifyOnFullImageBytesLoaded: function() { console.log('>>> [BRIDGE SUCCESS] notifyOnFullImageBytesLoaded!'); },
+      notifyOnEditedImageReady: function(w, h) { console.log('>>> [BRIDGE] notifyOnEditedImageReady', w, h); },
+      notifyOnEditorActivityChanged: function(act) { console.log('>>> [BRIDGE] Activity:', act); }
+    };
+    window.chrome.webview.hostObjects.sync['hvcEvents'] = window.hvcEvents;
+
+    function sendTestImage() {
+      console.log('>>> [BRIDGE] Creating test 400x300 image...');
+      const w = 400, h = 300;
+      const buf = new Uint8Array(w * h * 4);
+      for (let i = 0; i < buf.length; i += 4) {
+        buf[i] = 120;     // R
+        buf[i+1] = 180;   // G
+        buf[i+2] = 240;   // B
+        buf[i+3] = 255;   // A
+      }
+      const event = {
+        additionalData: {
+          type: 'fullImage',
+          payload: { width: w, height: h, orientation: 1, format: 'RGBA' }
+        },
+        getBuffer: () => buf.buffer
+      };
+      console.log('>>> [BRIDGE] Dispatching to', window._sharedBufferListeners.length, 'listeners');
+      window._sharedBufferListeners.forEach(fn => fn(event));
+    }
+  </script>
+  <script defer="defer" src="./static/js/main.js"></script>
+  <link href="./static/css/main.css" rel="stylesheet">
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>

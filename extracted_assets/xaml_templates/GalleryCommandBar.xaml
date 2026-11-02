@@ -1,0 +1,640 @@
+﻿<UserControl
+    x:Class="PhotosManager.Views.Controls.GalleryCommandBar"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:commands="using:PhotosManager.Commands"
+    xmlns:controls="using:PhotosManager.Views.Controls"
+    xmlns:conv="using:PhotosManager.Converters"
+    xmlns:core="using:PhotosCore"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:ex="using:PhotosManager.Extensions"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:models="using:Photos.Collection.Models"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    xmlns:photosmodels="using:Photos.Models"
+    xmlns:toolkit="using:CommunityToolkit.WinUI"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <ResourceDictionary Source="ms-appx:///PhotosManager/Styles/CommandBarStyles.xaml" />
+    </UserControl.Resources>
+
+    <Grid>
+        <controls:CustomCommandBar
+            x:Name="CommandBarControl"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            HorizontalContentAlignment="Right"
+            AutomationProperties.LandmarkType="Custom"
+            AutomationProperties.LocalizedLandmarkType="{x:Bind ex:StringExtensions.Localized('CommandBar_Controls/AutomationProperties/LocalizedLandmarkType'), Mode=OneTime}"
+            AutomationProperties.Name="{x:Bind ex:StringExtensions.Localized('CommandBar_Controls/AutomationProperties/Name'), Mode=OneTime}"
+            Background="Transparent"
+            BorderBrush="Transparent"
+            BorderThickness="0"
+            ClosedDisplayMode="Compact"
+            Closing="CommandBarControl_Closing"
+            DefaultLabelPosition="Right"
+            IsOpen="{x:Bind ViewModel.IsOpen, Mode=TwoWay}"
+            KeyDown="CommandBarControl_KeyDown"
+            KeyboardAcceleratorPlacementMode="Hidden"
+            Opened="CommandBarControl_Opened"
+            OverflowButtonVisibility="{x:Bind ViewModel.IsOverflowButtonVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}"
+            Tapped="CommandBarControl_Tapped">
+            <CommandBar.KeyboardAccelerators>
+                <KeyboardAccelerator
+                    Key="Home"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="None" />
+                <KeyboardAccelerator
+                    Key="End"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="None" />
+                <KeyboardAccelerator
+                    Key="PageUp"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="None" />
+                <KeyboardAccelerator
+                    Key="PageDown"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="None" />
+                <KeyboardAccelerator
+                    Key="Home"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Control" />
+                <KeyboardAccelerator
+                    Key="End"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Control" />
+                <KeyboardAccelerator
+                    Key="PageUp"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Control" />
+                <KeyboardAccelerator
+                    Key="PageDown"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Control" />
+                <KeyboardAccelerator
+                    Key="Home"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Shift" />
+                <KeyboardAccelerator
+                    Key="End"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Shift" />
+                <KeyboardAccelerator
+                    Key="PageUp"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Shift" />
+                <KeyboardAccelerator
+                    Key="PageDown"
+                    Invoked="PaginationKey_Invoked"
+                    Modifiers="Shift" />
+            </CommandBar.KeyboardAccelerators>
+
+            <AppBarButton
+                x:Name="SelectionClearButton"
+                x:Uid="CommandBar_SelectionClearButton"
+                AutomationProperties.Name="{x:Bind ViewModel.SelectionClearButtonFriendlyName, Mode=OneWay}"
+                Command="{x:Bind ViewModel.UserDeselectAllCommand, Mode=OneWay}"
+                Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                        Glyph={StaticResource CancelGlyph}}"
+                Label="{x:Bind ViewModel.SelectedClearText, Mode=OneWay}"
+                LabelPosition="Default"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                Visibility="{x:Bind ViewModel.IsSelectionClearButtonVisible(NavigationViewModel.CurrentPageInfo, ViewModel.HasSelection, ViewModel.IsSingleClickEnabled), Mode=OneWay}" />
+
+            <AppBarButton
+                x:Name="SelectionButton"
+                x:Uid="CommandBar_SelectionButton"
+                AutomationProperties.Name="{x:Bind ViewModel.GetSelectionButtonFriendlyName(ViewModel.SelectionService.Observable.SelectionMode), Mode=OneWay}"
+                Command="{x:Bind ViewModel.SelectionCommand, Mode=OneWay}"
+                Label="{x:Bind ViewModel.GetSelectionText(ViewModel.SelectionService.Observable.SelectionMode), Mode=OneWay}"
+                LabelPosition="Default"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                Visibility="{x:Bind ViewModel.IsSelectionButtonVisible(NavigationViewModel.CurrentPageInfo, ViewModel.IsSingleClickEnabled), Mode=OneWay}">
+                <AppBarButton.Icon>
+                    <IconSourceElement IconSource="{x:Bind ViewModel.GetSelectionIcon(ViewModel.SelectionService.Observable.SelectionMode), Mode=OneWay}" />
+                </AppBarButton.Icon>
+                <AppBarButton.Resources>
+                    <ResourceDictionary Source="ms-appx:///PhotosManager/Styles/AppBarButtonHighlightedStyles.xaml" />
+                </AppBarButton.Resources>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="DeleteButton"
+                ex:ControlExtensions.VisibilityBoundCommand="{x:Bind ViewModel.DeleteCommand, Mode=OneWay}"
+                AutomationProperties.HelpText="{x:Bind ex:StringExtensions.Localized('CommandBar_DeleteButton/AutomationProperties/HelpText'), Mode=OneTime}"
+                CommandParameter="{x:Bind ViewModel.ActionableItemKeys, Mode=OneWay}"
+                Icon="Delete"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_DeleteButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped">
+                <AppBarButton.KeyboardAccelerators>
+                    <KeyboardAccelerator Key="Delete" Invoked="AppBarButton_ShortcutActivated" />
+                </AppBarButton.KeyboardAccelerators>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="EditButton"
+                ex:ControlExtensions.VisibilityBoundCommand="{x:Bind ViewModel.EditCommand, Mode=OneWay}"
+                CommandParameter="{x:Bind ViewModel.ActionableItemKeys, Mode=OneWay}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_EditButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                ToolTipService.ToolTip="{x:Bind ex:StringExtensions.Localized('CommandBar_EditButton/ToolTipService/ToolTip'), Mode=OneTime}">
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="{StaticResource PhotosUWPFontFamily}" Glyph="{StaticResource EditGlyph}" />
+                </AppBarButton.Icon>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="BackupToOneDriveButton"
+                x:Uid="CommandBar_BackupToOneDriveButton"
+                Command="{x:Bind ViewModel.BackupToOneDriveCommand, Mode=OneWay}"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                Visibility="{x:Bind ViewModel.IsBackupToOneDriveButtonVisible(NavigationViewModel.CurrentPageInfo, ViewModel.HasSelection, ViewModel.CanExecuteBackupToOneDriveProperty), Mode=OneWay}">
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="{StaticResource PhotosUWPFontFamily}" Glyph="{StaticResource BackupToOneDriveGlyph}" />
+                </AppBarButton.Icon>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="MoveCopyButton"
+                AutomationProperties.Name="{x:Bind ex:StringExtensions.Localized('CommandBar_MoveCopyButton/AutomationProperties/Name'), Mode=OneTime}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_MoveCopyButton/Label'), Mode=OneTime}"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                Visibility="{x:Bind ViewModel.IsMoveCopyButtonVisible(NavigationViewModel.CurrentPageInfo, ViewModel.HasSelection), Mode=OneWay}">
+                <AppBarButton.Resources>
+                    <Visibility x:Key="AppBarButtonHasFlyoutChevronVisibility">Visible</Visibility>
+                </AppBarButton.Resources>
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="{StaticResource PhotosUWPFontFamily}" Glyph="{StaticResource MoveCopyGlyph}" />
+                </AppBarButton.Icon>
+                <AppBarButton.Flyout>
+                    <MenuFlyout
+                        x:Name="MoveCopyMenuFlyout"
+                        Closed="AppBarButtonMenuFlyout_Closed"
+                        Opened="AppBarButtonMenuFlyout_Opened"
+                        Placement="Bottom">
+                        <MenuFlyoutItem
+                            x:Name="MoveToFolderFlyoutItem"
+                            x:Uid="CommandBar_MoveToFolderFlyoutItem"
+                            Command="{x:Bind ViewModel.MoveToFolderCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind ViewModel.ActionableItemKeys, Mode=OneWay}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource MoveToGlyph}}" />
+
+                        <MenuFlyoutItem
+                            x:Name="CopyToFolderFlyoutItem"
+                            x:Uid="CommandBar_CopyToFolderFlyoutItem"
+                            Command="{x:Bind ViewModel.CopyToFolderCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind ViewModel.ActionableItemKeys, Mode=OneWay}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource CopyToGlyph}}" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="SlideshowButton"
+                AutomationProperties.Name="{x:Bind ex:StringExtensions.Localized('CommandBar_SlideshowButton/AutomationProperties/Name'), Mode=OneTime}"
+                Command="{x:Bind ViewModel.StartSlideshowCommand, Mode=OneWay}"
+                CommandParameter="{x:Bind NavigationViewModel.CurrentPageInfo.PageType, Mode=OneWay}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_SlideshowButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                Tapped="AppBarButton_Tapped">
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="{StaticResource PhotosUWPFontFamily}" Glyph="{StaticResource SlideshowGlyph}" />
+                </AppBarButton.Icon>
+                <AppBarButton.KeyboardAccelerators>
+                    <KeyboardAccelerator
+                        Key="F5"
+                        Invoked="AppBarButton_ShortcutActivated"
+                        Modifiers="None" />
+                </AppBarButton.KeyboardAccelerators>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="OpenInClipchampButton"
+                ex:ControlExtensions.VisibilityBoundCommand="{x:Bind ViewModel.OpenInClipchampCommand}"
+                AutomationProperties.Name="{x:Bind ex:StringExtensions.Localized('CommandBar_OpenInClipchampButton/AutomationProperties/Name'), Mode=OneTime}"
+                CommandParameter="{x:Bind ViewModel.ActionableItemKeys, Mode=OneWay}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_OpenInClipchampButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                Tapped="AppBarButton_Tapped"
+                ToolTipService.ToolTip="{x:Bind ex:StringExtensions.Localized('CommandBar_OpenInClipchampButton/ToolTipService/ToolTip'), Mode=OneTime}">
+                <AppBarButton.Icon>
+                    <IconSourceElement IconSource="{x:Bind ViewModel.ClipChampIcon, Mode=OneTime}" />
+                </AppBarButton.Icon>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="ShareButton"
+                AutomationProperties.HelpText="{x:Bind ex:StringExtensions.Localized('CommandBar_ShareButton/AutomationProperties/HelpText'), Mode=OneTime}"
+                Command="{x:Bind ViewModel.ShareCommand, Mode=OneWay}"
+                CommandParameter="{x:Bind commands:ShareCommandParameter.Create(ViewModel.ActionableItemKeys, NavigationViewModel.CurrentPageInfo), Mode=OneWay}"
+                Icon="Share"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_ShareButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                Visibility="{x:Bind ViewModel.ShouldShowDefaultShareOption, Mode=OneWay}">
+                <AppBarButton.KeyboardAccelerators>
+                    <KeyboardAccelerator
+                        Key="S"
+                        Invoked="AppBarButton_ShortcutActivated"
+                        Modifiers="Menu" />
+                </AppBarButton.KeyboardAccelerators>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="ShareMultipleOptionButton"
+                Width="{x:Bind controls:GalleryCommandBar.AppBarButtonWithChevronWidth}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_ShareButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                LayoutUpdated="ShareMultipleOptionButton_LayoutUpdated"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                Visibility="{x:Bind ViewModel.CanShareViaOneDrive, Mode=OneWay}">
+                <AppBarButton.Resources>
+                    <Visibility x:Key="AppBarButtonHasFlyoutChevronVisibility">Visible</Visibility>
+                </AppBarButton.Resources>
+                <AppBarButton.Icon>
+                    <FontIcon Glyph="{StaticResource ShareGlyph}" />
+                </AppBarButton.Icon>
+                <AppBarButton.Flyout>
+                    <MenuFlyout
+                        x:Name="ShareMenuFlyout"
+                        Closed="AppBarButtonMenuFlyout_Closed"
+                        Opened="AppBarButtonMenuFlyout_Opened"
+                        Placement="Bottom">
+                        <MenuFlyoutItem
+                            x:Name="ShareViaOneDriveItem"
+                            x:Uid="CommandBar_ShareViaOneDriveFlyoutItem"
+                            Command="{x:Bind ViewModel.ShareViaOneDriveCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind commands:ShareCommandParameter.Create(ViewModel.ActionableItemKeys, NavigationViewModel.CurrentPageInfo), Mode=OneWay}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource ShareViaOneDriveGlyph}}" />
+
+                        <MenuFlyoutItem
+                            x:Name="ShareViaOtherAppsItem"
+                            x:Uid="CommandBar_ShareViaOtherAppsFlyoutItem"
+                            Command="{x:Bind ViewModel.ShareCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind commands:ShareCommandParameter.Create(ViewModel.ActionableItemKeys, NavigationViewModel.CurrentPageInfo), Mode=OneWay}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource ShareGlyph}}" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="GallerySortButton"
+                Width="{x:Bind controls:GalleryCommandBar.AppBarButtonWithChevronWidth}"
+                AutomationProperties.FullDescription="{x:Bind GetSelectedSortOptionsText(GallerySortOptionsViewModel.SelectedGalleryDirection, GallerySortOptionsViewModel.SelectedGallerySort), Mode=OneWay}"
+                AutomationProperties.HelpText="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton/AutomationProperties/HelpText'), Mode=OneTime}"
+                AutomationProperties.Name="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton/AutomationProperties/Name'), Mode=OneTime}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                LayoutUpdated="GallerySortButton_LayoutUpdated"
+                Loaded="GallerySortButton_Loaded"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                ToolTipService.ToolTip="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton/ToolTipService/ToolTip'), Mode=OneTime}"
+                Visibility="{x:Bind ViewModel.IsSortButtonVisible(NavigationViewModel.CurrentPageInfo, ViewModel.IsOnlineSearchResultSource), Mode=OneWay}">
+                <AppBarButton.Resources>
+                    <Visibility x:Key="AppBarButtonHasFlyoutChevronVisibility">Visible</Visibility>
+                </AppBarButton.Resources>
+                <AppBarButton.Icon>
+                    <FontIcon Glyph="{StaticResource SortGlyph}" />
+                </AppBarButton.Icon>
+                <AppBarButton.Flyout>
+                    <MenuFlyout
+                        x:Name="GallerySortMenuFlyout"
+                        Closed="AppBarButtonMenuFlyout_Closed"
+                        Opened="AppBarButtonMenuFlyout_Opened"
+                        Placement="Bottom">
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="RelevancyFlyoutItem"
+                            x:Uid="CommandBar_RelevancyFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifySortCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:Sort.Relevancy}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_OptionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon Glyph={StaticResource RelevancySortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsRelevancySortSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped"
+                            Visibility="{x:Bind ViewModel.IsRelevancySortVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="DateTakenFlyoutItem"
+                            x:Uid="CommandBar_DateTakenFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifySortCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:Sort.DateTaken}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_OptionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource DateTakenSortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsDateTakenSortSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="DateCreatedFlyoutItem"
+                            x:Uid="CommandBar_DateCreatedFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifySortCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:Sort.DateCreated}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_OptionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource DateCreatedSortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsDateCreatedSortSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="DateModifiedFlyoutItem"
+                            x:Uid="CommandBar_DateModifiedFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifySortCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:Sort.DateModified}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_OptionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource DateModifiedSortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsDateModifiedSortSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="NameFlyoutItem"
+                            x:Uid="CommandBar_NameFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifySortCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:Sort.Name}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_OptionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource NameSortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsNameSortSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <MenuFlyoutSeparator />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="AscendingFlyoutItem"
+                            x:Uid="CommandBar_AscendingFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifyDirectionCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:SortDirection.Ascending}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_DirectionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource AscendingSortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsAscendingDirectionSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="DescendingFlyoutItem"
+                            x:Uid="CommandBar_DescendingFlyoutItem"
+                            Command="{x:Bind GallerySortOptionsViewModel.ModifyDirectionCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:SortDirection.Descending}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GallerySortButton_DirectionGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource DescendingSortGlyph}}"
+                            IsChecked="{x:Bind GallerySortOptionsViewModel.IsDescendingDirectionSelected, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="GalleryFilterButton"
+                Width="{x:Bind controls:GalleryCommandBar.AppBarButtonWithChevronWidth}"
+                AutomationProperties.FullDescription="{x:Bind GetSelectedFilterOptionText(ViewModel.GalleryTypeFilter), Mode=OneWay}"
+                AutomationProperties.HelpText="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryFilterButton/AutomationProperties/HelpText'), Mode=OneTime}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryFilterButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                LayoutUpdated="GalleryFilterButton_LayoutUpdated"
+                Loaded="GalleryFilterButton_Loaded"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                ToolTipService.ToolTip="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryFilterButton/ToolTipService/ToolTip'), Mode=OneTime}"
+                Visibility="{x:Bind ViewModel.IsFilterButtonVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}">
+                <AppBarButton.Resources>
+                    <Visibility x:Key="AppBarButtonHasFlyoutChevronVisibility">Visible</Visibility>
+                </AppBarButton.Resources>
+                <AppBarButton.Icon>
+                    <FontIcon Glyph="{StaticResource FilterGlyph}" />
+                </AppBarButton.Icon>
+                <AppBarButton.Flyout>
+                    <MenuFlyout
+                        x:Name="GalleryFilterMenuFlyout"
+                        Closed="GalleryFilterMenuFlyout_Closed"
+                        Opened="GalleryFilterMenuFlyout_Opened"
+                        Placement="Bottom">
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="AllMediaFlyoutItem"
+                            x:Uid="CommandBar_AllMediaFlyoutItem"
+                            Command="{x:Bind ViewModel.ModifyFilterCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind core:TypeFilter.AllMedia}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_MediaTypeFilter_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource AllMediaFilterGlyph}}"
+                            IsChecked="{x:Bind ViewModel.IsAllMediaFilter, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="PhotosFlyoutItem"
+                            x:Uid="CommandBar_PhotosFlyoutItem"
+                            Command="{x:Bind ViewModel.ModifyFilterCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind core:TypeFilter.Images}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_MediaTypeFilter_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource PhotosFilterGlyph}}"
+                            IsChecked="{x:Bind ViewModel.IsImagesFilter, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="VideosFlyoutItem"
+                            x:Uid="CommandBar_VideosFlyoutItem"
+                            Command="{x:Bind ViewModel.ModifyFilterCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind core:TypeFilter.Videos}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_MediaTypeFilter_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource VideosFilterGlyph}}"
+                            IsChecked="{x:Bind ViewModel.IsVideosFilter, Mode=OneWay}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+
+                        <MenuFlyoutSeparator
+                            x:Name="SubfolderContentSeparator"
+                            x:Load="{x:Bind ViewModel.IsSubfolderFeatureEnabled, Mode=OneTime}"
+                            Visibility="{x:Bind ViewModel.IsSubfolderOptionVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}" />
+
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <RadioMenuFlyoutItem
+                            x:Name="ShowSubfolderContentButton"
+                            x:Uid="CommandBar_ShowSubfolderContentButton"
+                            x:Load="{x:Bind ViewModel.IsSubfolderFeatureEnabled, Mode=OneTime}"
+                            Command="{x:Bind ViewModel.ShowSubfolderContentCommand, Mode=OneWay}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_SubfolderContentButton_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource SubfoldersGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped"
+                            Visibility="{x:Bind ViewModel.IsSubfolderOptionVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}" />
+
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="HideSubfolderContentButton"
+                            x:Uid="CommandBar_HideSubfolderContentButton"
+                            x:Load="{x:Bind ViewModel.IsSubfolderFeatureEnabled, Mode=OneTime}"
+                            Command="{x:Bind ViewModel.HideSubfolderContentCommand, Mode=OneWay}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_SubfolderContentButton_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource FolderGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped"
+                            Visibility="{x:Bind ViewModel.IsSubfolderOptionVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+
+            <AppBarButton
+                x:Name="GalleryLayoutButton"
+                Width="{x:Bind controls:GalleryCommandBar.AppBarButtonWithChevronWidth}"
+                AutomationProperties.FullDescription="{x:Bind GetSelectedLayoutOptionsText(ViewModel.ApplicationSettings.GalleryLayout, ViewModel.ApplicationSettings.GalleryThumbnailSize), Mode=OneWay}"
+                AutomationProperties.HelpText="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton/AutomationProperties/HelpText'), Mode=OneTime}"
+                AutomationProperties.Name="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton/AutomationProperties/Name'), Mode=OneTime}"
+                Label="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton/Label'), Mode=OneTime}"
+                LabelPosition="Collapsed"
+                LayoutUpdated="GalleryLayoutButton_LayoutUpdated"
+                Loaded="GalleryLayoutButton_Loaded"
+                PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                Tapped="AppBarButton_Tapped"
+                ToolTipService.ToolTip="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton/ToolTipService/ToolTip'), Mode=OneTime}"
+                Visibility="{x:Bind ViewModel.IsLayoutButtonVisible(NavigationViewModel.CurrentPageInfo), Mode=OneWay}">
+                <AppBarButton.Resources>
+                    <Visibility x:Key="AppBarButtonHasFlyoutChevronVisibility">Visible</Visibility>
+                </AppBarButton.Resources>
+                <AppBarButton.Icon>
+                    <FontIcon FontFamily="{StaticResource PhotosUWPFontFamily}" Glyph="{x:Bind ViewModel.LayoutIcon, Mode=OneWay}" />
+                </AppBarButton.Icon>
+                <AppBarButton.Flyout>
+                    <MenuFlyout
+                        x:Name="GalleryLayoutMenuFlyout"
+                        Closed="AppBarButtonMenuFlyout_Closed"
+                        Opened="AppBarButtonMenuFlyout_Opened"
+                        Placement="Bottom">
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="RiverFlyoutItem"
+                            x:Uid="CommandBar_RiverFlyoutItem"
+                            Click="LayoutFlyoutItem_Click"
+                            Command="{x:Bind ViewModel.ModifyLayoutCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind models:LayoutEnum.River}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource RiverLayoutGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="GridLayoutFlyoutItem"
+                            x:Uid="CommandBar_GridLayoutFlyoutItem"
+                            Click="LayoutFlyoutItem_Click"
+                            Command="{x:Bind ViewModel.ModifyLayoutCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind models:LayoutEnum.Grid}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton_TypeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource GridLayoutGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+
+                        <MenuFlyoutSeparator />
+
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="SmallSizeFlyoutItem"
+                            x:Uid="CommandBar_SmallSizeFlyoutItem"
+                            Command="{x:Bind ViewModel.ModifyThumbnailSizeCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:DisplayThumbnailSize.Small}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton_SizeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource SmallSizeGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="MediumSizeFlyoutItem"
+                            x:Uid="CommandBar_MediumSizeFlyoutItem"
+                            Command="{x:Bind ViewModel.ModifyThumbnailSizeCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:DisplayThumbnailSize.Medium}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton_SizeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource MediumSizeGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+
+                        <!--  https://task.ms/57778812: [Gallery] Fix sort and filter options not always being selected  -->
+                        <muxc:RadioMenuFlyoutItem
+                            x:Name="LargeSizeFlyoutItem"
+                            x:Uid="CommandBar_LargeSizeFlyoutItem"
+                            Command="{x:Bind ViewModel.ModifyThumbnailSizeCommand, Mode=OneWay}"
+                            CommandParameter="{x:Bind photosmodels:DisplayThumbnailSize.Large}"
+                            GroupName="{x:Bind ex:StringExtensions.Localized('CommandBar_GalleryLayoutButton_SizeGroup'), Mode=OneTime}"
+                            Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                                    Glyph={StaticResource LargeSizeGlyph}}"
+                            PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                            Tapped="AppBarButton_Tapped" />
+                    </MenuFlyout>
+                </AppBarButton.Flyout>
+            </AppBarButton>
+
+            <CommandBar.SecondaryCommands>
+                <AppBarButton
+                    x:Name="SelectAllButton"
+                    x:Load="{x:Bind ViewModel.IsSelectAllButtonLoaded(NavigationViewModel.CurrentPageInfo), Mode=OneWay}"
+                    Command="{x:Bind ViewModel.UserSelectAllCommand, Mode=OneWay}"
+                    Icon="SelectAll"
+                    Label="{x:Bind ex:StringExtensions.Localized('CommandBar_SelectAllButton/Label'), Mode=OneTime}"
+                    PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                    Tapped="AppBarButton_Tapped">
+                    <AppBarButton.KeyboardAccelerators>
+                        <KeyboardAccelerator
+                            Key="A"
+                            Invoked="AppBarButton_ShortcutActivated"
+                            Modifiers="Control" />
+                    </AppBarButton.KeyboardAccelerators>
+                </AppBarButton>
+                <AppBarButton
+                    x:Name="SelectNoneButton"
+                    x:Load="{x:Bind ViewModel.IsDeselectAllButtonLoaded(NavigationViewModel.CurrentPageInfo), Mode=OneWay}"
+                    Command="{x:Bind ViewModel.UserDeselectAllCommand, Mode=OneWay}"
+                    Icon="{toolkit:FontIcon FontFamily={StaticResource PhotosUWPFontFamily},
+                                            Glyph={StaticResource CancelGlyph}}"
+                    KeyboardAcceleratorTextOverride="{x:Bind ex:StringExtensions.Localized('CommandBar_SelectNoneButton/KeyboardAcceleratorTextOverride'), Mode=OneTime}"
+                    Label="{x:Bind ex:StringExtensions.Localized('CommandBar_SelectNoneButton/Label'), Mode=OneTime}"
+                    PreviewKeyDown="AppBarButton_PreviewKeyDownActivated"
+                    Tapped="AppBarButton_Tapped">
+                    <AppBarButton.KeyboardAccelerators>
+                        <KeyboardAccelerator
+                            Key="Escape"
+                            Invoked="AppBarButton_ShortcutActivated"
+                            Modifiers="None" />
+                        <KeyboardAccelerator
+                            Key="D"
+                            Invoked="AppBarButton_ShortcutActivated"
+                            Modifiers="Control" />
+                    </AppBarButton.KeyboardAccelerators>
+                </AppBarButton>
+            </CommandBar.SecondaryCommands>
+        </controls:CustomCommandBar>
+    </Grid>
+</UserControl>

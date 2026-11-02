@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Large raw bundles and extraction scratchpads
+Photos_2026.*
+extracted_bundle/
+extracted_x64/
+RIV/
+
+# Build artifacts
+PhotoEditor_Mac/PhotosEditor_bin
+PhotoEditor_Mac/PhotosEditor.app
+Photos Editor.app
+PhotosEditor.dmg
+PhotoEditor_Mac/dmg_staging/
+test_*
+*.tmp

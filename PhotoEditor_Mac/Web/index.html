@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>
+window.__capturedErrors = [];
+const _origConsoleError = console.error;
+console.error = function(...args) {
+    window.__capturedErrors.push(args.map(a => String(a && a.stack ? a.stack : (typeof a === "object" ? JSON.stringify(a) : a))).join(" "));
+    _origConsoleError.apply(console, args);
+};
+window.addEventListener("error", function(e) {
+    window.__capturedErrors.push("WINDOW ERROR: " + e.message + " at " + e.filename + ":" + e.lineno + " " + (e.error ? e.error.stack : ""));
+});
+window.addEventListener("unhandledrejection", function(e) {
+    window.__capturedErrors.push("PROMISE REJECTION: " + String(e.reason));
+});
+</script>
+
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+  <title>Photos Editor</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      background-color: #1a1a1a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #root {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+
+    /* Modern macOS Empty / Drop Overlay */
+    #drop-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at center, #242424 0%, #161616 100%);
+      transition: background-color 0.2s ease, opacity 0.3s ease;
+    }
+
+    #drop-overlay.hidden {
+      display: none;
+    }
+
+    #drop-overlay.drag-over {
+      background: radial-gradient(circle at center, #1b3a57 0%, #102133 100%);
+    }
+
+    .drop-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 56px;
+      border-radius: 20px;
+      background: rgba(40, 40, 40, 0.7);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      text-align: center;
+      max-width: 480px;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .drop-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(96, 205, 255, 0.5);
+    }
+
+    .icon-container {
+      width: 80px;
+      height: 80px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #0078d4, #00bcf2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 24px rgba(0, 120, 212, 0.4);
+    }
+
+    .icon-container svg {
+      width: 44px;
+      height: 44px;
+      fill: #ffffff;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: #ffffff;
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+
+    p.subtitle {
+      font-size: 14px;
+      color: #a0a0a0;
+      margin-bottom: 24px;
+      line-height: 1.4;
+    }
+
+    .btn-open {
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #ffffff;
+      background: #0078d4;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s ease, transform 0.1s ease;
+      box-shadow: 0 4px 12px rgba(0, 120, 212, 0.3);
+    }
+
+    .btn-open:hover {
+      background: #1084d8;
+      transform: scale(1.02);
+    }
+
+    .btn-open:active {
+      transform: scale(0.98);
+    }
+
+    .formats-badge {
+      margin-top: 24px;
+      font-size: 12px;
+      color: #666666;
+      letter-spacing: 0.5px;
+    }
+
+    
+  </style>
+
+  <!-- Reverse-Engineered Photos Host Bridge -->
+  <script>
+    window._sharedBufferListeners = [];
+    window._currentFileName = "photo.png";
+    window._currentImageDimensions = { width: 0, height: 0 };
+    window._pendingSaveBuffer = null;
+
+    // Emulate Windows WebView2 Shared Buffer Dispatcher
+    window.chrome = {
+      webview: {
+        addEventListener: function(event, callback) {
+          if (event === 'sharedbufferreceived') {
+            window._sharedBufferListeners.push(callback);
+          }
+        },
+        removeEventListener: function(event, callback) {
+          window._sharedBufferListeners = window._sharedBufferListeners.filter(cb => cb !== callback);
+        },
+        hostObjects: { sync: {} }
+      }
+    };
+
+    // Host-View Controller Protocol Callbacks
+    window.hvcEvents = {
+      notifyOnReady: function() {
+        console.log('[MacBridge] Photos Image Editor Ready');
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
+          window.webkit.messageHandlers.macHost.postMessage({ action: 'editorReady' });
+        }
+      },
+      notifyOnUserSave: function(e, bytesLen, a, l) {
+        console.log('[MacBridge] notifyOnUserSave requested. Requesting edited pixel buffer...');
+        window._requestEditedBufferAndSave();
+      },
+      notifyOnUserClose: function() {
+        console.log('[MacBridge] User clicked close');
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
+          window.webkit.messageHandlers.macHost.postMessage({ action: 'close' });
+        }
+      },
+      notifyOnDebugLog: function(msg) {
+        console.log('[Photos Debug]', msg);
+      },
+      notifyOnError: function(id, msg) {
+        console.warn('[Photos Error]', id, msg);
+      },
+      notifyOnTelemetry: function(e, t) {},
+      notifyOnThumbnailLoaded: function() {
+        console.log('[MacBridge] Thumbnail rendered');
+      },
+      notifyOnFullImageBytesLoaded: function() {
+        console.log('[MacBridge] Full image pixels loaded into WebGL pipeline!');
+        document.getElementById('drop-overlay').classList.add('hidden');
+        
+      },
+      notifyOnEditedImageReady: function(width, height) {
+        console.log('[MacBridge] notifyOnEditedImageReady:', width, height);
+        if (window._pendingSaveBuffer) {
+          window._processSavedPixels(window._pendingSaveBuffer, width, height);
+          window._pendingSaveBuffer = null;
+        }
+      },
+      notifyOnEditorActivityChanged: function(activity) {
+        console.log('[MacBridge] Mode changed to:', activity);
+      },
+      notifyOnLoadModelRequested: function(model) {
+        console.log('[MacBridge] Model requested:', model);
+      },
+      notifyOnModelInferenceCancelled: function(e) {},
+      notifyOnF11: function() {},
+      notifyOnEscape: function() {}
+    };
+
+    window.chrome.webview.hostObjects.sync['hvcEvents'] = window.hvcEvents;
+
+    // Load from Data URL (Used by Swift native host for instant zero-copy loading)
+    window.loadFromDataUrl = function(dataUrl, fileName) {
+      if (!dataUrl) return;
+      window._currentFileName = fileName || "photo.png";
+      const _lbl = document.getElementById('display-file-name'); if (_lbl) _lbl.textContent = window._currentFileName;
+
+      console.log(`[MacBridge] Loading image via dataUrl for ${fileName}...`);
+      const img = new Image();
+      img.onload = function() {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        window.loadRawImageData(w, h, 1, imgData.data.buffer, window._currentFileName);
+      };
+      img.onerror = function(err) {
+        console.error("[MacBridge] Failed to load image from dataUrl:", err);
+      };
+      img.src = dataUrl;
+    };
+
+    // Dispatch Raw Image Bytes into Photos Editor
+    window.loadRawImageData = function(width, height, orientation, pixelBuffer, fileName) {
+      window._currentFileName = fileName || "photo.png";
+      window._currentImageDimensions = { width: width, height: height };
+      const _lbl = document.getElementById('display-file-name'); if (_lbl) _lbl.textContent = window._currentFileName;
+
+      console.log(`[MacBridge] Dispatching ${width}x${height} pixels to Photos Editor...`);
+      const event = {
+        additionalData: {
+          type: 'fullImage',
+          payload: {
+            width: width,
+            height: height,
+            orientation: orientation || 1,
+            format: 'RGBA'
+          }
+        },
+        getBuffer: function() {
+          return pixelBuffer;
+        }
+      };
+
+      window._sharedBufferListeners.forEach(fn => fn(event));
+    };
+
+    // Load from HTML File Object
+    window.loadLocalFile = function(file) {
+      if (!file) return;
+      window._currentFileName = file.name;
+      const _lbl = document.getElementById('display-file-name'); if (_lbl) _lbl.textContent = file.name;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        window.loadFromDataUrl(e.target.result, file.name);
+      };
+      reader.readAsDataURL(file);
+    };
+
+    // Request Edited Buffer from Editor
+    window._requestEditedBufferAndSave = function() {
+      const w = window._currentImageDimensions.width || 1920;
+      const h = window._currentImageDimensions.height || 1080;
+      const saveBuffer = new ArrayBuffer(w * h * 4);
+      window._pendingSaveBuffer = saveBuffer;
+
+      const saveEvent = {
+        additionalData: {
+          type: 'editedImage',
+          enableTransparency: true
+        },
+        getBuffer: function() {
+          return saveBuffer;
+        }
+      };
+
+      window._sharedBufferListeners.forEach(fn => fn(saveEvent));
+    };
+
+    // Save Pixels to File (Native Mac Host or Web Download)
+    window._processSavedPixels = function(buffer, width, height) {
+      console.log(`[MacBridge] Saving ${width}x${height} image...`);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const clamped = new Uint8ClampedArray(buffer);
+      const imgData = new ImageData(clamped, width, height);
+      ctx.putImageData(imgData, 0, 0);
+
+      // If running inside native macOS WKWebView host
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
+        const dataUrl = canvas.toDataURL('image/png');
+        window.webkit.messageHandlers.macHost.postMessage({
+          action: 'saveImage',
+          fileName: window._currentFileName,
+          dataUrl: dataUrl,
+          width: width,
+          height: height
+        });
+      } else {
+        // Fallback for standalone browser use
+        canvas.toBlob(function(blob) {
+          const a = document.createElement('a');
+          const url = URL.createObjectURL(blob);
+          a.href = url;
+          const ext = window._currentFileName.substring(window._currentFileName.lastIndexOf('.')) || '.png';
+          const base = window._currentFileName.replace(/\.[^/.]+$/, "");
+          a.download = `${base}_edited${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 100);
+        }, 'image/png');
+      }
+    };
+
+    // Trigger Open Action (Calls native Mac Open Panel if inside app, else triggers file input)
+    window.openNewImage = function() {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
+        window.webkit.messageHandlers.macHost.postMessage({ action: 'openFileDialog' });
+      } else {
+        document.getElementById('file-input').click();
+      }
+    };
+  </script>
+
+  <script defer="defer" src="./static/js/main.js"></script>
+  <link href="./static/css/main.css" rel="stylesheet"/>
+</head>
+<body>
+  <!-- Photos Editor Canvas Mount -->
+  <div id="root"></div>
+
+  
+
+  <!-- Empty / Drop State -->
+  <div id="drop-overlay">
+    <div class="drop-card" onclick="window.openNewImage()">
+      <div class="icon-container">
+        <svg viewBox="0 0 24 24">
+          <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+        </svg>
+      </div>
+      <h1>Open a Photo to Edit</h1>
+      <p class="subtitle">Drag & drop any image here, or browse files on your Mac</p>
+      <button class="btn-open">Choose Photo...</button>
+      <div class="formats-badge">JPEG • PNG • HEIC • WebP • TIFF • BMP • GIF • Camera RAW</div>
+    </div>
+    <input type="file" id="file-input" style="display:none" accept="image/*,.heic,.heif,.raw,.cr2,.cr3,.nef,.arw,.dng" onchange="window.loadLocalFile(this.files[0])"/>
+  </div>
+
+  <!-- Drag and drop listeners -->
+  <script>
+    const overlay = document.getElementById('drop-overlay');
+    window.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      overlay.classList.add('drag-over');
+    });
+    window.addEventListener('dragleave', function(e) {
+      overlay.classList.remove('drag-over');
+    });
+    window.addEventListener('drop', function(e) {
+      e.preventDefault();
+      overlay.classList.remove('drag-over');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        window.loadLocalFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    // Keyboard Shortcuts
+    window.addEventListener('keydown', function(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        window.openNewImage();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        window._requestEditedBufferAndSave();
+      }
+    });
+  </script>
+</body>
+</html>
