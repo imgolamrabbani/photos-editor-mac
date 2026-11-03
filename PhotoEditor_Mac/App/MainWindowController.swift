@@ -1,5 +1,6 @@
 import Cocoa
 import WebKit
+import UniformTypeIdentifiers
 
 class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate {
     private var webView: WKWebView!
@@ -9,7 +10,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
     private var isSaveAsCopy: Bool = false
 
     convenience init() {
-        // Standard native macOS Dark Aqua window (eliminates titlebar / traffic-light overlaps)
+        // Standard native macOS Dark Aqua window
         let window = CustomDragWindow(
             contentRect: NSRect(x: 100, y: 100, width: 1240, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -73,12 +74,11 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
             return
         }
 
-        let accessDir = targetURL.deletingLastPathComponent()
-        webView.loadFileURL(targetURL, allowingReadAccessTo: accessDir)
+        // Allow read access across the filesystem so local photo files can be loaded directly
+        webView.loadFileURL(targetURL, allowingReadAccessTo: URL(fileURLWithPath: "/"))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Fallback timer: ensure isEditorReady is set even if notifyOnReady was delayed
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
             self.isEditorReady = true
@@ -89,7 +89,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
         }
     }
 
-    // Preserve window in memory when red close button is pressed
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
         return false
@@ -135,46 +134,59 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
 
         currentLoadedFileURL = url
         self.window?.title = "\(url.lastPathComponent) — Photos Editor"
-        self.window?.representedURL = url // Native macOS document proxy icon in titlebar
+        self.window?.representedURL = url
         self.window?.setIsVisible(true)
         self.window?.makeKeyAndOrderFront(nil)
         self.window?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
 
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
-            showAlert(title: "Failed to Open Image", message: "Could not decode image at: \(url.path)")
-            return
-        }
+        let ext = url.pathExtension.lowercased()
+        let webCompatibleExtensions = ["jpg", "jpeg", "png", "webp", "gif"]
 
-        // Convert to high-quality image data URL
-        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-        let imageData: Data?
-        let mimeType: String
-        if let jpg = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
-            imageData = jpg
-            mimeType = "image/jpeg"
-        } else if let png = bitmapRep.representation(using: .png, properties: [:]) {
-            imageData = png
-            mimeType = "image/png"
+        if webCompatibleExtensions.contains(ext) {
+            // Fast direct file loading without decoding overhead
+            let fileURLStr = url.absoluteString
+            let escapedFileName = url.lastPathComponent
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "'", with: "\\'")
+
+            let js = "window.loadFromFileUrl('\(fileURLStr)', '\(escapedFileName)');"
+            webView.evaluateJavaScript(js) { _, err in
+                if let err = err {
+                    print("[PhotosEditor] Error loading image from fileUrl:", err)
+                }
+            }
         } else {
-            imageData = nil
-            mimeType = ""
-        }
+            // High-precision CoreGraphics conversion for HEIC, TIFF, Camera RAW, BMP
+            guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                showAlert(title: "Failed to Open Image", message: "Could not decode image at: \(url.path)")
+                return
+            }
 
-        guard let data = imageData else {
-            showAlert(title: "Decode Error", message: "Could not extract image data.")
-            return
-        }
+            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
+            guard let jpgData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.98]) else {
+                showAlert(title: "Decode Error", message: "Could not extract image data.")
+                return
+            }
 
-        let base64 = data.base64EncodedString()
-        let dataUrl = "data:\(mimeType);base64,\(base64)"
-        let fileName = url.lastPathComponent.replacingOccurrences(of: "\"", with: "\\\"")
-
-        let js = "window.loadFromDataUrl('\(dataUrl)', '\(fileName)');"
-        webView.evaluateJavaScript(js) { _, err in
-            if let err = err {
-                print("[PhotosEditor] Error loading image into webview:", err)
+            let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            let tempCacheURL = tempDir.appendingPathComponent("photos_edit_cache_\(UUID().uuidString).jpg")
+            do {
+                try jpgData.write(to: tempCacheURL, options: .atomic)
+                let escapedFileName = url.lastPathComponent
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                    .replacingOccurrences(of: "'", with: "\\'")
+                let js = "window.loadFromFileUrl('\(tempCacheURL.absoluteString)', '\(escapedFileName)');"
+                webView.evaluateJavaScript(js) { _, err in
+                    if let err = err {
+                        print("[PhotosEditor] Error loading converted image into webview:", err)
+                    }
+                }
+            } catch {
+                showAlert(title: "Cache Error", message: error.localizedDescription)
             }
         }
     }
@@ -215,8 +227,14 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
             }
         } else {
             let savePanel = NSSavePanel()
-            savePanel.allowedContentTypes = [.png, .jpeg]
+            if #available(macOS 11.0, *) {
+                savePanel.allowedContentTypes = [.png, .jpeg]
+            } else {
+                savePanel.allowedFileTypes = ["png", "jpg", "jpeg"]
+            }
             savePanel.canCreateDirectories = true
+            savePanel.title = "Save Photo As Copy"
+            savePanel.prompt = "Save"
 
             let defaultName: String
             if let cur = currentLoadedFileURL {
@@ -227,7 +245,11 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
             }
             savePanel.nameFieldStringValue = defaultName
 
-            savePanel.beginSheetModal(for: self.window!) { response in
+            NSApp.activate(ignoringOtherApps: true)
+            self.window?.makeKeyAndOrderFront(nil)
+
+            savePanel.beginSheetModal(for: self.window!) { [weak self] response in
+                guard let self = self else { return }
                 if response == .OK, let targetURL = savePanel.url {
                     do {
                         try imageData.write(to: targetURL, options: .atomic)
@@ -268,16 +290,20 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
         openPanel.canChooseFiles = true
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = false
-        openPanel.allowedContentTypes = [
-            .image,
-            .png,
-            .jpeg,
-            .tiff,
-            .bmp,
-            .gif,
-            .heic,
-            .webP
-        ]
+        if #available(macOS 11.0, *) {
+            openPanel.allowedContentTypes = [
+                .image,
+                .png,
+                .jpeg,
+                .tiff,
+                .bmp,
+                .gif,
+                .heic,
+                .webP
+            ]
+        } else {
+            openPanel.allowedFileTypes = ["jpg", "jpeg", "png", "heic", "webp", "tiff", "bmp", "gif"]
+        }
 
         openPanel.beginSheetModal(for: self.window!) { response in
             if response == .OK, let selectedURL = openPanel.url {
@@ -288,12 +314,12 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
 
     @objc func menuSavePhoto(_ sender: Any?) {
         isSaveAsCopy = false
-        webView.evaluateJavaScript("window._requestEditedBufferAndSave();", completionHandler: nil)
+        webView.evaluateJavaScript("window.hvcEvents.notifyOnUserSave(0);", completionHandler: nil)
     }
 
     @objc func menuSavePhotoAs(_ sender: Any?) {
         isSaveAsCopy = true
-        webView.evaluateJavaScript("window._requestEditedBufferAndSave();", completionHandler: nil)
+        webView.evaluateJavaScript("window.hvcEvents.notifyOnUserSave(1);", completionHandler: nil)
     }
 
     @objc func menuUndo(_ sender: Any?) {

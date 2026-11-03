@@ -40,6 +40,29 @@ window.addEventListener("unhandledrejection", function(e) {
       z-index: 1;
     }
 
+    /* Contextual Menu High-Contrast Overrides */
+    .ms-ContextualMenu-Callout .ms-Callout-main {
+      background-color: #2b2b2b !important;
+      border: 1px solid rgba(255, 255, 255, 0.15) !important;
+      border-radius: 6px !important;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6) !important;
+    }
+    .ms-ContextualMenu-link {
+      color: #ffffff !important;
+    }
+    .ms-ContextualMenu-link:hover {
+      background-color: #383838 !important;
+      color: #ffffff !important;
+    }
+    .ms-ContextualMenu-itemText {
+      color: #ffffff !important;
+      font-weight: 400 !important;
+    }
+    .ms-ContextualMenu-icon {
+      color: #ffffff !important;
+      fill: #ffffff !important;
+    }
+
     /* Modern macOS Empty / Drop Overlay */
     #drop-overlay {
       position: absolute;
@@ -57,7 +80,7 @@ window.addEventListener("unhandledrejection", function(e) {
     }
 
     #drop-overlay.hidden {
-      display: none;
+      display: none !important;
     }
 
     #drop-overlay.drag-over {
@@ -147,8 +170,6 @@ window.addEventListener("unhandledrejection", function(e) {
       color: #666666;
       letter-spacing: 0.5px;
     }
-
-    
   </style>
 
   <!-- Reverse-Engineered Photos Host Bridge -->
@@ -194,9 +215,35 @@ window.addEventListener("unhandledrejection", function(e) {
         }
       },
       notifyOnUserSave: function(e, bytesLen, a, l) {
-        console.log('[MacBridge] notifyOnUserSave requested. SaveType:', e);
-        window._lastSaveType = (typeof e === 'number') ? e : 1;
-        window._requestEditedBufferAndSave();
+        const saveCode = (typeof e === 'number') ? e : 1;
+        window._lastSaveType = saveCode;
+        const saveTypeStr = (saveCode === 2) ? 'copyClipboard' : ((saveCode === 0) ? 'saveOriginal' : 'saveAsCopy');
+        console.log('[MacBridge] notifyOnUserSave requested. SaveType:', saveTypeStr);
+
+        // Instant direct WebGL canvas export (zero delay, accurate, preserves all edits)
+        const canvas = document.querySelector('canvas');
+        if (canvas) {
+          try {
+            const dataUrl = canvas.toDataURL('image/png');
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
+              window.webkit.messageHandlers.macHost.postMessage({
+                action: 'saveImage',
+                saveType: saveTypeStr,
+                fileName: window._currentFileName,
+                dataUrl: dataUrl,
+                width: canvas.width,
+                height: canvas.height
+              });
+              console.log('[MacBridge] Successfully sent saveImage to native macOS host');
+              return;
+            }
+          } catch(err) {
+            console.warn('[MacBridge] Direct canvas export failed, attempting buffer fallback:', err);
+          }
+        }
+
+        // Buffer pipeline fallback
+        window._requestEditedBufferAndSave(bytesLen);
       },
       notifyOnUserClose: function() {
         console.log('[MacBridge] User clicked close');
@@ -216,8 +263,8 @@ window.addEventListener("unhandledrejection", function(e) {
       },
       notifyOnFullImageBytesLoaded: function() {
         console.log('[MacBridge] Full image pixels loaded into WebGL pipeline!');
-        document.getElementById('drop-overlay').classList.add('hidden');
-        
+        const overlay = document.getElementById('drop-overlay');
+        if (overlay) overlay.classList.add('hidden');
       },
       notifyOnEditedImageReady: function(width, height) {
         console.log('[MacBridge] notifyOnEditedImageReady:', width, height);
@@ -239,11 +286,36 @@ window.addEventListener("unhandledrejection", function(e) {
 
     window.chrome.webview.hostObjects.sync['hvcEvents'] = window.hvcEvents;
 
-    // Load from Data URL (Used by Swift native host for instant zero-copy loading)
+    // Load from local File URL (Zero-copy, highest performance)
+    window.loadFromFileUrl = function(fileUrl, fileName) {
+      if (!fileUrl) return;
+      window._currentFileName = fileName || "photo.png";
+
+      console.log(`[MacBridge] Loading image via fileUrl: ${fileUrl}...`);
+      const img = new Image();
+      img.onload = function() {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        window.loadRawImageData(w, h, 1, imgData.data.buffer, window._currentFileName);
+        const overlay = document.getElementById('drop-overlay');
+        if (overlay) overlay.classList.add('hidden');
+      };
+      img.onerror = function(err) {
+        console.error("[MacBridge] Failed to load image from fileUrl:", fileUrl, err);
+      };
+      img.src = fileUrl;
+    };
+
+    // Load from Data URL (Fallback / clipboard)
     window.loadFromDataUrl = function(dataUrl, fileName) {
       if (!dataUrl) return;
       window._currentFileName = fileName || "photo.png";
-      const _lbl = document.getElementById('display-file-name'); if (_lbl) _lbl.textContent = window._currentFileName;
 
       console.log(`[MacBridge] Loading image via dataUrl for ${fileName}...`);
       const img = new Image();
@@ -257,6 +329,8 @@ window.addEventListener("unhandledrejection", function(e) {
         ctx.drawImage(img, 0, 0);
         const imgData = ctx.getImageData(0, 0, w, h);
         window.loadRawImageData(w, h, 1, imgData.data.buffer, window._currentFileName);
+        const overlay = document.getElementById('drop-overlay');
+        if (overlay) overlay.classList.add('hidden');
       };
       img.onerror = function(err) {
         console.error("[MacBridge] Failed to load image from dataUrl:", err);
@@ -268,7 +342,6 @@ window.addEventListener("unhandledrejection", function(e) {
     window.loadRawImageData = function(width, height, orientation, pixelBuffer, fileName) {
       window._currentFileName = fileName || "photo.png";
       window._currentImageDimensions = { width: width, height: height };
-      const _lbl = document.getElementById('display-file-name'); if (_lbl) _lbl.textContent = window._currentFileName;
 
       console.log(`[MacBridge] Dispatching ${width}x${height} pixels to Photos Editor...`);
       const event = {
@@ -293,7 +366,6 @@ window.addEventListener("unhandledrejection", function(e) {
     window.loadLocalFile = function(file) {
       if (!file) return;
       window._currentFileName = file.name;
-      const _lbl = document.getElementById('display-file-name'); if (_lbl) _lbl.textContent = file.name;
 
       const reader = new FileReader();
       reader.onload = function(e) {
@@ -303,10 +375,11 @@ window.addEventListener("unhandledrejection", function(e) {
     };
 
     // Request Edited Buffer from Editor
-    window._requestEditedBufferAndSave = function() {
-      const w = window._currentImageDimensions.width || 1920;
-      const h = window._currentImageDimensions.height || 1080;
-      const saveBuffer = new ArrayBuffer(w * h * 4);
+    window._requestEditedBufferAndSave = function(bytesLen) {
+      const fallbackBytes = (window._currentImageDimensions.width || 1920) * (window._currentImageDimensions.height || 1080) * 4;
+      const size = (typeof bytesLen === 'number' && bytesLen > 0) ? bytesLen : fallbackBytes;
+      console.log(`[MacBridge] Allocating save buffer: ${size} bytes`);
+      const saveBuffer = new ArrayBuffer(size);
       window._pendingSaveBuffer = saveBuffer;
 
       const saveEvent = {
@@ -327,57 +400,64 @@ window.addEventListener("unhandledrejection", function(e) {
       const saveTypeStr = (window._lastSaveType === 2) ? 'copyClipboard' : ((window._lastSaveType === 0) ? 'saveOriginal' : 'saveAsCopy');
       console.log(`[MacBridge] Saving ${width}x${height} image with saveType:`, saveTypeStr);
 
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      const clamped = new Uint8ClampedArray(buffer);
-      const imgData = new ImageData(clamped, width, height);
-      ctx.putImageData(imgData, 0, 0);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        
+        const expectedBytes = width * height * 4;
+        const clamped = new Uint8ClampedArray(buffer, 0, Math.min(buffer.byteLength, expectedBytes));
+        const imgData = new ImageData(clamped, width, height);
+        ctx.putImageData(imgData, 0, 0);
 
-      // Web API Clipboard support
-      if (window._lastSaveType === 2) {
-        try {
-          canvas.toBlob(function(blob) {
-            if (blob && navigator.clipboard && navigator.clipboard.write) {
-              navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).catch(e => console.log('Clipboard web API note:', e));
-            }
-          }, 'image/png');
-        } catch(e) {}
-      }
-
-      // If running inside native macOS WKWebView host
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
         const dataUrl = canvas.toDataURL('image/png');
-        window.webkit.messageHandlers.macHost.postMessage({
-          action: 'saveImage',
-          saveType: saveTypeStr,
-          fileName: window._currentFileName,
-          dataUrl: dataUrl,
-          width: width,
-          height: height
-        });
-      } else {
-        // Fallback for standalone browser use
+
+        // Web API Clipboard support
         if (window._lastSaveType === 2) {
-          alert('Photo copied to clipboard');
-          return;
+          try {
+            canvas.toBlob(function(blob) {
+              if (blob && navigator.clipboard && navigator.clipboard.write) {
+                navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).catch(e => console.log('Clipboard web API note:', e));
+              }
+            }, 'image/png');
+          } catch(e) {}
         }
-        canvas.toBlob(function(blob) {
-          const a = document.createElement('a');
-          const url = URL.createObjectURL(blob);
-          a.href = url;
-          const ext = window._currentFileName.substring(window._currentFileName.lastIndexOf('.')) || '.png';
-          const base = window._currentFileName.replace(/\.[^/.]+$/, "");
-          const suffix = (window._lastSaveType === 0) ? '' : '_copy';
-          a.download = `${base}${suffix}${ext}`;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }, 100);
-        }, 'image/png');
+
+        // If running inside native macOS WKWebView host
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
+          window.webkit.messageHandlers.macHost.postMessage({
+            action: 'saveImage',
+            saveType: saveTypeStr,
+            fileName: window._currentFileName,
+            dataUrl: dataUrl,
+            width: width,
+            height: height
+          });
+        } else {
+          // Fallback for standalone browser use
+          if (window._lastSaveType === 2) {
+            alert('Photo copied to clipboard');
+            return;
+          }
+          canvas.toBlob(function(blob) {
+            const a = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            a.href = url;
+            const ext = window._currentFileName.substring(window._currentFileName.lastIndexOf('.')) || '.png';
+            const base = window._currentFileName.replace(/\.[^/.]+$/, "");
+            const suffix = (window._lastSaveType === 0) ? '' : '_copy';
+            a.download = `${base}${suffix}${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+              document.body.removeChild(a);
+              URL.revokeObjectURL(url);
+            }, 100);
+          }, 'image/png');
+        }
+      } catch (err) {
+        console.error('[MacBridge] Error in _processSavedPixels:', err);
       }
     };
 
@@ -398,8 +478,6 @@ window.addEventListener("unhandledrejection", function(e) {
 <body>
   <!-- Photos Editor Canvas Mount -->
   <div id="root"></div>
-
-  
 
   <!-- Empty / Drop State -->
   <div id="drop-overlay">
@@ -442,7 +520,7 @@ window.addEventListener("unhandledrejection", function(e) {
         window.openNewImage();
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        window._requestEditedBufferAndSave();
+        window.hvcEvents.notifyOnUserSave(window._lastSaveType || 1);
       }
     });
   </script>

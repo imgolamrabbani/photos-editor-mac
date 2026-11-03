@@ -21,7 +21,6 @@ swiftc -O \
        -target arm64-apple-macosx12.0 \
        -framework Cocoa \
        -framework WebKit \
-       "${SCRIPT_DIR}/App/PhotoDocument.swift" \
        "${SCRIPT_DIR}/App/AppDelegate.swift" \
        "${SCRIPT_DIR}/App/MainWindowController.swift" \
        "${SCRIPT_DIR}/App/main.swift" \

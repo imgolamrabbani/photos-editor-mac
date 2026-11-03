@@ -31,6 +31,12 @@
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
+            <key>CFBundleTypeName</key>
+            <string>Image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Default</string>
             <key>CFBundleTypeExtensions</key>
             <array>
                 <string>jpg</string>
@@ -50,14 +56,6 @@
                 <string>arw</string>
                 <string>dng</string>
             </array>
-            <key>CFBundleTypeName</key>
-            <string>Image File</string>
-            <key>CFBundleTypeRole</key>
-            <string>Editor</string>
-            <key>LSHandlerRank</key>
-            <string>Default</string>
-            <key>NSDocumentClass</key>
-            <string>PhotoDocument</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>public.image</string>
