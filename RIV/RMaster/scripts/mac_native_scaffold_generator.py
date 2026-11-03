@@ -6,13 +6,17 @@ Part of the RMaster Universal Reverse Engineering & Cross-Platform Porting Suite
 Generates a complete, zero-dependency, production-grade native Swift/AppKit desktop wrapper
 around any extracted Windows hybrid web application (Photos, Office, Settings, Teams, etc.).
 
-Eliminates all common porting bugs:
+Eliminates all critical reverse engineering and porting pitfalls:
   1. Window Traffic-Light Overlap: Avoids .fullSizeContentView styleMask conflicts.
   2. Dock Reopen Failures: Implements applicationShouldHandleReopen lifecycle delegate.
-  3. AppKit "Cannot open format" Alert: Subclasses NSDocumentController to bypass format modal.
-  4. WebView2 SharedBuffer Gap: Injects zero-copy ArrayBuffer dispatcher in JavaScript.
-  5. Native Save & Clipboard: Integrates NSSavePanel and NSPasteboard.general.
-  6. Self-Contained Distribution: Generates build.sh compiling with swiftc -O, ad-hoc
+  3. AppKit "Cannot open format" Alert Trap: Completely omits NSDocumentClass in Info.plist
+     and routes file opening exclusively through NSApplicationDelegate (application(_:open:)).
+  4. WebKit IPC Buffer Limit: Injects allowingReadAccessTo: / and direct file:// loading,
+     preventing silent truncate crashes on multi-megabyte base64 strings in evaluateJavaScript.
+  5. WebGL Backbuffer Clearing & Offscreen Export: Generates safe 2D canvas blit export handlers
+     and handles dynamic PNG-to-JPEG conversion via NSBitmapImageRep on macOS save.
+  6. Native Save & Clipboard: Integrates NSSavePanel, atomic file writes, and NSPasteboard.general.
+  7. Self-Contained Distribution: Generates build.sh compiling with swiftc -O, ad-hoc
      codesigning with codesign, and creating .dmg disk image with hdiutil.
 
 Usage:
@@ -60,9 +64,6 @@ def generate_scaffold(app_name: str, bundle_id: str, web_dir: Path, output_dir: 
     # 2. Generate main.swift
     main_swift = """import Cocoa
 
-// Initialize custom document controller early to bypass AppKit format alerts
-_ = UniversalDocumentController.shared
-
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
@@ -70,16 +71,26 @@ app.run()
 """
     (app_dir / "main.swift").write_text(main_swift)
 
-    # 3. Generate AppDelegate.swift
+    # 3. Generate AppDelegate.swift (pure NSApplicationDelegate, no NSDocumentClass traps)
     app_delegate = """import Cocoa
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var mainWindowController: MainWindowController?
+    private var pendingOpenURLs: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        mainWindowController = MainWindowController()
+        if mainWindowController == nil {
+            mainWindowController = MainWindowController()
+        }
         mainWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        if !pendingOpenURLs.isEmpty {
+            for url in pendingOpenURLs {
+                mainWindowController?.loadFile(from: url)
+            }
+            pendingOpenURLs.removeAll()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -96,36 +107,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
-        if mainWindowController == nil {
-            mainWindowController = MainWindowController()
+        if let mwc = mainWindowController {
+            mwc.showWindow(nil)
+            mwc.loadFile(from: url)
+        } else {
+            pendingOpenURLs.append(url)
         }
-        mainWindowController?.loadFile(from: url)
         return true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let first = urls.first else { return }
+        if let mwc = mainWindowController {
+            mwc.showWindow(nil)
+            mwc.loadFile(from: first)
+        } else {
+            pendingOpenURLs.append(first)
+        }
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        if let first = filenames.first {
+            _ = application(sender, openFile: first)
+        }
+        sender.reply(toOpenOrPrint: .success)
     }
 }
 """
     (app_dir / "AppDelegate.swift").write_text(app_delegate)
 
-    # 4. Generate DocumentController
-    doc_controller = """import Cocoa
-
-class UniversalDocumentController: NSDocumentController {
-    override func openDocument(withContentsOf url: URL, display displayDocument: Bool, completionHandler: @escaping (NSDocument?, Bool, Error?) -> Void) {
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            if appDelegate.mainWindowController == nil {
-                appDelegate.mainWindowController = MainWindowController()
-            }
-            appDelegate.mainWindowController?.loadFile(from: url)
-            completionHandler(nil, true, nil)
-            return
-        }
-        super.openDocument(withContentsOf: url, display: displayDocument, completionHandler: completionHandler)
-    }
-}
-"""
-    (app_dir / "DocumentController.swift").write_text(doc_controller)
-
-    # 5. Generate MainWindowController.swift using template replacement
+    # 4. Generate MainWindowController.swift
     win_controller = """import Cocoa
 import WebKit
 
@@ -134,7 +145,6 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
     private var currentFileURL: URL?
 
     convenience init() {
-        // Standard macOS Dark Aqua window (eliminates traffic-light overlap bugs)
         let window = NSWindow(
             contentRect: NSRect(x: 100, y: 100, width: 1240, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -187,7 +197,8 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
         }
 
         if let url = indexURL {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            // Read access to root allows streaming local file:// URLs directly into Image elements
+            webView.loadFileURL(url, allowingReadAccessTo: URL(fileURLWithPath: "/"))
         }
     }
 
@@ -214,26 +225,75 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
         self.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
-        guard let data = try? Data(contentsOf: url) else { return }
-        let base64 = data.base64EncodedString()
-        let js = "if (window.loadFromDataUrl) { window.loadFromDataUrl('data:image/png;base64,\\(base64)', '\\(url.lastPathComponent)'); }"
+        let escapedPath = url.path.replacingOccurrences(of: "\\\\", with: "\\\\\\\\").replacingOccurrences(of: "'", with: "\\\\'")
+        let js = "if (window.loadFromUrl) { window.loadFromUrl('file://\\(escapedPath)', '\\(url.lastPathComponent)'); }"
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     private func handleSave(_ body: [String: Any]) {
+        guard let dataUrl = body["dataUrl"] as? String else {
+            print("[MacHost] No dataUrl received in save action")
+            return
+        }
+
+        let isSaveAsCopy = (body["isCopy"] as? Bool) ?? true
+
+        let parts = dataUrl.components(separatedBy: ",")
+        guard parts.count == 2, let rawData = Data(base64Encoded: parts[1]) else {
+            print("[MacHost] Failed to decode base64 dataUrl")
+            return
+        }
+
+        if !isSaveAsCopy, let targetURL = currentFileURL {
+            saveImageData(rawData, to: targetURL)
+            return
+        }
+
         let savePanel = NSSavePanel()
         savePanel.canCreateDirectories = true
-        savePanel.nameFieldStringValue = currentFileURL?.lastPathComponent ?? "ExportedFile.png"
+        let defaultName = currentFileURL?.deletingPathExtension().lastPathComponent ?? "ExportedImage"
+        savePanel.nameFieldStringValue = "\\(defaultName)_copy.png"
+        savePanel.allowedFileTypes = ["png", "jpg", "jpeg"]
+
         savePanel.beginSheetModal(for: self.window!) { response in
             if response == .OK, let targetURL = savePanel.url {
-                print("[MacHost] Saved to:", targetURL.path)
+                self.saveImageData(rawData, to: targetURL)
             }
         }
     }
 
+    private func saveImageData(_ rawData: Data, to targetURL: URL) {
+        let ext = targetURL.pathExtension.lowercased()
+        var finalData = rawData
+
+        // Dynamic format conversion: If target is JPEG, convert PNG data to high-quality JPEG
+        if ext == "jpg" || ext == "jpeg" {
+            if let imageRep = NSBitmapImageRep(data: rawData),
+               let jpegData = imageRep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+                finalData = jpegData
+            }
+        }
+
+        do {
+            try finalData.write(to: targetURL, options: .atomic)
+            print("[MacHost] Image successfully saved to: \\(targetURL.path)")
+            self.currentFileURL = targetURL
+            self.window?.title = "\\(targetURL.lastPathComponent) — APP_NAME_PLACEHOLDER"
+            self.window?.representedURL = targetURL
+        } catch {
+            print("[MacHost] Failed to write image: \\(error)")
+        }
+    }
+
     private func handleCopy(_ body: [String: Any]) {
-        NSPasteboard.general.clearContents()
-        print("[MacHost] Copied payload to clipboard")
+        if let dataUrl = body["dataUrl"] as? String {
+            let parts = dataUrl.components(separatedBy: ",")
+            if parts.count == 2, let rawData = Data(base64Encoded: parts[1]), let image = NSImage(data: rawData) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([image])
+                print("[MacHost] Image copied to system clipboard")
+            }
+        }
     }
 }
 """
@@ -241,7 +301,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
     win_controller = win_controller.replace("WEB_DIR_PLACEHOLDER", str(web_target.resolve()))
     (app_dir / "MainWindowController.swift").write_text(win_controller)
 
-    # 6. Generate Info.plist
+    # 5. Generate Info.plist (registers document types WITHOUT NSDocumentClass)
     info_plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -262,12 +322,34 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Image File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Default</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.image</string>
+                <string>public.jpeg</string>
+                <string>public.png</string>
+                <string>public.heic</string>
+                <string>public.tiff</string>
+                <string>com.compuserve.gif</string>
+                <string>org.webmproject.webp</string>
+                <string>com.microsoft.bmp</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 """
     (output_dir / "Info.plist").write_text(info_plist)
 
-    # 7. Generate build.sh
+    # 6. Generate build.sh
     app_bin_name = app_name.replace(" ", "")
     build_sh = f"""#!/bin/bash
 set -e
@@ -280,7 +362,6 @@ swiftc -O \\
        -target arm64-apple-macosx12.0 \\
        -framework Cocoa \\
        -framework WebKit \\
-       "${{SCRIPT_DIR}}/App/DocumentController.swift" \\
        "${{SCRIPT_DIR}}/App/AppDelegate.swift" \\
        "${{SCRIPT_DIR}}/App/MainWindowController.swift" \\
        "${{SCRIPT_DIR}}/App/main.swift" \\

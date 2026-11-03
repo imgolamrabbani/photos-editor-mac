@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ui_ux_parity_tester.py — Automated macOS WebKit UI/UX Parity & Discrepancy Auditor
+ui_ux_parity_tester.py — Automated macOS WebKit UI/UX Parity & Export Integrity Auditor
 Part of the RMaster Universal Reverse Engineering & Cross-Platform Porting Suite.
 
 Runs headless/windowed WebKit automation to audit ported applications:
@@ -8,6 +8,8 @@ Runs headless/windowed WebKit automation to audit ported applications:
   - Traverses React Fiber trees and Fluent UI components for unpopulated labels.
   - Audits accessible names (aria-label, aria-description) across interactive controls.
   - Verifies typography, custom icon fonts (Segoe Fluent / MDL2), and dark mode contrast.
+  - Verifies Image Export & Canvas Integrity: validates that exported pixel buffers or snapshots
+    are non-blank, non-zero-alpha, and not empty black screens (0x00000000).
   - Captures high-resolution retina screenshots of every view state.
 
 Usage:
@@ -56,10 +58,10 @@ class HeadlessAuditor: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         window.contentView?.addSubview(webView)
         window.makeKeyAndOrderFront(nil)
 
-        webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
+        webView.loadFileURL(htmlURL, allowingReadAccessTo: URL(fileURLWithPath: "/"))
 
         let start = Date()
-        while !isDone && Date().timeIntervalSince(start) < 20.0 {
+        while !isDone && Date().timeIntervalSince(start) < 25.0 {
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
         }
 
@@ -80,9 +82,7 @@ class HeadlessAuditor: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         (() => {
             const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
             const menus = Array.from(document.querySelectorAll('.ms-ContextualMenu, [role="menu"]'));
-            const textNodes = Array.from(document.querySelectorAll('*')).filter(el => {
-                return el.children.length === 0 && (el.innerText || '').trim().length > 0;
-            });
+            const canvases = Array.from(document.querySelectorAll('canvas'));
 
             // Find controls with empty text and no aria label (the blank dropdown bug)
             const emptyControls = buttons.filter(b => {
@@ -95,11 +95,30 @@ class HeadlessAuditor: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
                 outerHtml: b.outerHTML.substring(0, 200)
             }));
 
+            // Dark mode contrast hazard check
+            const contrastHazards = [];
+            buttons.forEach(b => {
+                const style = window.getComputedStyle(b);
+                const color = style.color;
+                const bg = style.backgroundColor;
+                if (color === 'rgb(0, 0, 0)' && (bg === 'rgb(44, 44, 44)' || bg === 'rgb(32, 32, 32)' || bg === 'rgba(0, 0, 0, 0)')) {
+                    contrastHazards.push({
+                        text: b.innerText,
+                        aria: b.getAttribute('aria-label'),
+                        color: color,
+                        background: bg
+                    });
+                }
+            });
+
             return {
                 totalButtons: buttons.length,
                 totalMenus: menus.length,
+                totalCanvases: canvases.length,
                 emptyControlsCount: emptyControls.length,
                 emptyControls: emptyControls,
+                contrastHazardsCount: contrastHazards.length,
+                contrastHazards: contrastHazards,
                 buttonSamples: buttons.slice(0, 15).map(b => ({
                     text: (b.innerText || '').trim(),
                     aria: b.getAttribute('aria-label'),
@@ -113,17 +132,47 @@ class HeadlessAuditor: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
             if let dict = res as? [String: Any] {
                 self.auditResults = dict
             }
-            self.captureSnapshot()
+            self.captureSnapshotAndVerifyPixels()
         }
     }
 
-    func captureSnapshot() {
+    func captureSnapshotAndVerifyPixels() {
         let config = WKSnapshotConfiguration()
         webView.takeSnapshot(with: config) { image, _ in
-            if let img = image, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
+            var pixelReport: [String: Any] = ["pixelIntegrity": "UNKNOWN"]
+            if let img = image, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
                 let imgURL = self.reportDir.appendingPathComponent("audit_view_snapshot.png")
-                try? png.write(to: imgURL)
+                if let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: imgURL)
+                }
+
+                // Pixel sampling audit: ensure canvas/view is not solid blank or transparent
+                let width = rep.pixelsWide
+                let height = rep.pixelsHigh
+                var nonZeroCount = 0
+                let totalSamples = 100
+
+                for i in 0..<totalSamples {
+                    let px = (width * (i + 1)) / (totalSamples + 2)
+                    let py = (height * (i + 1)) / (totalSamples + 2)
+                    if let color = rep.colorAt(x: px, y: py) {
+                        if color.alphaComponent > 0.1 && (color.redComponent > 0.05 || color.greenComponent > 0.05 || color.blueComponent > 0.05) {
+                            nonZeroCount += 1
+                        }
+                    }
+                }
+
+                pixelReport = [
+                    "width": width,
+                    "height": height,
+                    "sampledPoints": totalSamples,
+                    "nonZeroPixelCount": nonZeroCount,
+                    "isSolidBlank": nonZeroCount < 5,
+                    "pixelIntegrity": nonZeroCount >= 5 ? "HEALTHY" : "DEFECTIVE_BLANK_CANVAS"
+                ]
             }
+
+            self.auditResults["pixelVerification"] = pixelReport
             self.isDone = true
         }
     }
@@ -132,7 +181,7 @@ class HeadlessAuditor: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         let jsonURL = reportDir.appendingPathComponent("ui_audit_results.json")
         if let data = try? JSONSerialization.data(withJSONObject: auditResults, options: .prettyPrinted) {
             try? data.write(to: jsonURL)
-            print("[+] UI Audit JSON saved to:", jsonURL.path)
+            print("[+] UI & Pixel Audit JSON saved to:", jsonURL.path)
         }
         exit(0)
     }
@@ -164,11 +213,10 @@ def run_audit(target_path: Path, output_dir: Path):
         print(f"[-] Could not find index.html at {target_path}")
         sys.exit(1)
 
-    print(f"[*] Auditing UI/UX for: {html_file}")
+    print(f"[*] Auditing UI/UX and Pixel Integrity for: {html_file}")
     swift_harness = output_dir / "Auditor.swift"
     swift_harness.write_text(SWIFT_TESTER_TEMPLATE)
 
-    # Run swift runner
     cmd = ["swift", str(swift_harness), str(html_file), str(output_dir)]
     print(f"[*] Launching WebKit audit harness...")
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -176,7 +224,6 @@ def run_audit(target_path: Path, output_dir: Path):
     if res.stderr:
         print(res.stderr)
 
-    # Clean harness
     if swift_harness.exists():
         swift_harness.unlink()
 

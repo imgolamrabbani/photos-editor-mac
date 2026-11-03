@@ -82,10 +82,72 @@ In dark mode, Fluent UI themes invert semantic color names:
 
 If a component applies `color: palette.black` directly without checking whether dark mode is active or converting through rgba alpha utilities (`Zy(e.palette.black, ...)`), text becomes pure black on dark gray backgrounds.
 
-### 3.3 Automated Tool: `hybrid_bundle_analyzer.py`
-Audit minified JavaScript bundles for host hooks, localization traps, and theme contrast hazards:
+### 3.3 The WebGL Cleared Drawing Buffer Trap (`preserveDrawingBuffer: false`)
+By default in WebGL/WebGL2 specifications, `preserveDrawingBuffer` defaults to `false`. This allows the GPU compositor to discard or clear the backbuffer to transparent black `(0, 0, 0, 0)` immediately after each frame is swapped to the display surface.
+
+When an application calls `canvas.toDataURL()` or `gl.readPixels()` outside of the active draw callback, WebKit returns a completely transparent black image. This manifests as the classic "Blank Saved Copy" bug: the on-screen preview looks vibrant, but any saved image or clipboard copy contains 0 bytes of visual content.
+
+**Remediation Pattern:**
+1. Intercept offscreen tile render loops (e.g. Babylon `getEditedImageBytes` or `readPixels`).
+2. Hand over raw pixel buffers directly via a dedicated bridge variable (e.g. `window._lastEditedPixels`).
+3. Blit the pixel buffer onto an offscreen **2D Canvas** using `createImageData` and `putImageData`:
+   ```javascript
+   const offscreenCanvas = document.createElement('canvas');
+   offscreenCanvas.width = width;
+   offscreenCanvas.height = height;
+   const ctx = offscreenCanvas.getContext('2d');
+   const imgData = ctx.createImageData(width, height);
+   imgData.data.set(renderedPixelBuffer);
+   ctx.putImageData(imgData, 0, 0);
+   const exportDataUrl = offscreenCanvas.toDataURL('image/png');
+   ```
+   Unlike WebGL canvases, 2D HTML5 canvas buffers retain their raster data indefinitely and never auto-clear.
+
+### 3.4 WebKit Background RAF Throttling in Offscreen Export Pipelines
+Chromium and WebKit handle `requestAnimationFrame` differently when processing tasks offscreen or in background tabs.
+In WebKit (macOS Safari and `WKWebView`):
+- `requestAnimationFrame` is aggressively throttled or frozen when windows are not animating continuously, when minimized, or while native modal sheets (such as `NSSavePanel`) are displayed.
+- If an offscreen tile loop uses `requestAnimationFrame` to iterate through image tiles, the entire export pipeline deadlocks or hangs at 0% progress.
+
+**Remediation:**
+In offscreen tile renderers (e.g. Webpack module `94271`), replace recursive `requestAnimationFrame(cb)` calls with:
+```javascript
+setTimeout(cb, 0);
+```
+or `queueMicrotask(cb)`. This ensures tile rendering executes cooperatively on the event loop without being suspended by WebKit's display link throttler.
+
+### 3.5 External Texture / Filter LUT Dependency Traps
+Windows photo engines frequently rely on unbundled native Look-Up Tables (LUTs) or DirectX surface handles. Before exporting, they invoke:
+```javascript
+editor.waitForRenderingToBeReady();
+```
+On macOS, if external LUT asset URLs fail to load or DirectX handles are missing, this Promise never resolves, causing saving to hang indefinitely.
+
+**Remediation:**
+Short-circuit the readiness check in the JavaScript bundle:
+```javascript
+waitForRenderingToBeReady: function() {
+    return Promise.resolve();
+}
+```
+
+### 3.6 TypedArray Length Boundary and RangeError Handover
+When assembling composite tiles in JavaScript (e.g. `Uint8ClampedArray.set(src, offset)`), if the calculated source tile byte length exceeds the destination subarray bounds, JavaScript immediately throws:
+```
+RangeError: offset is out of bounds
+```
+**Remediation:**
+Always clamp source slice operations before invoking `.set()`:
+```javascript
+dest.set(src.subarray(0, Math.min(src.byteLength, dest.byteLength - offset)), offset);
+```
+Or bypass intermediate tile stitching by having the rendering engine hand over the completed frame buffer directly to the host container.
+
+### 3.7 Automated Tools: `hybrid_bundle_analyzer.py` & `webgl_export_auditor.py`
+Audit bundles for IPC hooks, empty localization traps, theme hazards, and WebGL drawing buffer hazards:
 ```bash
-python3 RIV/RMaster/scripts/hybrid_bundle_analyzer.py <web_directory_or_js_file>
+python3 RIV/RMaster/scripts/hybrid_bundle_analyzer.py <web_dir_or_bundle_js>
+python3 RIV/RMaster/scripts/webgl_export_auditor.py --scan <web_dir_or_bundle_js>
 ```
 
 ---
@@ -101,36 +163,71 @@ To eliminate title bar overlaps:
 - Set `window.appearance = NSAppearance(named: .darkAqua)` to match native system dark themes.
 - Set `window.representedURL = fileURL` to enable the native macOS document proxy icon in the window title bar.
 
-### 4.2 Dock Reopen & File Opening Lifecycle
-1. **Dock Click:** Implement `applicationShouldHandleReopen(_:hasVisibleWindows:)` in `AppDelegate.swift` so clicking the Dock icon restores or recreates the main window if closed.
-2. **Document Controller:** Subclass `NSDocumentController` (`UniversalDocumentController.shared`) to intercept `openDocument(...)`. This prevents macOS from displaying the modal alert:
-   *"The document could not be opened. App cannot open files in 'Image File' format."*
+### 4.2 AppKit Single-Window vs NSDocumentClass Alert Traps
+A critical Cocoa trap occurs when porting single-window hybrid apps:
+- If `<key>NSDocumentClass</key>` is defined in `Info.plist`, Cocoa automatically routes file open requests through `NSDocumentController.openDocument(...)`.
+- If the app does not subclass `NSDocument` with a full multi-window document model, or if the controller's completion handler returns `nil`, Cocoa displays a blocking modal alert:
+  *"The document could not be opened. Photos Editor cannot open files in the 'Image File' format."*
 
-### 4.3 Zero-Copy / Shared Buffer Emulation
-Windows WebView2 dispatches image data via `sharedbufferreceived`. Emulate this in `index.html`:
-```javascript
-window.chrome = {
-  webview: {
-    addEventListener: function(event, callback) {
-      if (event === 'sharedbufferreceived') {
-        window._sharedBufferListeners.push(callback);
-      }
-    },
-    removeEventListener: function(event, callback) {
-      window._sharedBufferListeners = window._sharedBufferListeners.filter(cb => cb !== callback);
-    },
-    hostObjects: { sync: {} }
-  }
-};
+**The Correct Native Architecture:**
+1. Completely remove `<key>NSDocumentClass</key>` from `Info.plist`.
+2. Declare `CFBundleDocumentTypes` with all standard image UTIs (`public.image`, `public.jpeg`, `public.png`, `public.heic`, `public.tiff`, etc.).
+3. Handle file opening exclusively via `NSApplicationDelegate`:
+   ```swift
+   func application(_ application: NSApplication, open urls: [URL]) {
+       guard let first = urls.first else { return }
+       mainWindowController?.loadFile(from: first)
+   }
+
+   func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+       let url = URL(fileURLWithPath: filename)
+       mainWindowController?.loadFile(from: url)
+       return true
+   }
+   ```
+4. Implement `applicationShouldHandleReopen(_:hasVisibleWindows:)` to restore the window when clicking the macOS Dock icon.
+
+### 4.3 WebKit IPC Buffer Limits & Direct File Streaming
+Passing large base64 image strings (>8-16 MB) across the WebKit IPC bridge via `evaluateJavaScript("loadFromDataUrl('data:...base64...')")` frequently triggers silent IPC serialization limits or process terminations.
+
+**The Solution:**
+1. Configure `WKWebView` with root directory access:
+   ```swift
+   webView.loadFileURL(indexURL, allowingReadAccessTo: URL(fileURLWithPath: "/"))
+   ```
+2. Pass the raw `file://` URL directly to JavaScript:
+   ```javascript
+   function loadFromUrl(fileUrl, filename) {
+       const img = new Image();
+       img.crossOrigin = 'anonymous';
+       img.onload = () => { /* feed image directly to WebGL texture */ };
+       img.src = fileUrl;
+   }
+   ```
+This provides instant, zero-copy loading of multi-hundred-megabyte images and RAW files.
+
+### 4.4 Dynamic Image Format Conversion on Save
+When the user selects "Save as copy" and chooses a `.jpg` or `.jpeg` destination, the exported PNG data URL from the HTML5 canvas must be dynamically transcoded to JPEG with high fidelity:
+```swift
+let ext = targetURL.pathExtension.lowercased()
+var finalData = rawData
+
+if ext == "jpg" || ext == "jpeg" {
+    if let imageRep = NSBitmapImageRep(data: rawData),
+       let jpegData = imageRep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+        finalData = jpegData
+    }
+}
+
+try finalData.write(to: targetURL, options: .atomic)
 ```
-Dispatch ArrayBuffers directly to listeners with `additionalData: { type: 'fullImage', payload: { ... } }`.
 
-### 4.4 Save & Clipboard Operations
+### 4.5 Save & Clipboard Operations
 - **Save as copy:** Display `NSSavePanel` configured with the original filename base and `.png` / `.jpeg` extensions.
 - **Save:** Overwrite the original file URL directly using atomic disk writes (`try data.write(to: url, options: .atomic)`).
 - **Copy to clipboard:** Decode the image data in Swift and write to `NSPasteboard.general.writeObjects([image])`.
 
-### 4.5 Automated Tool: `mac_native_scaffold_generator.py`
+### 4.6 Automated Tool: `mac_native_scaffold_generator.py`
 Generate a complete, compile-ready Swift project:
 ```bash
 python3 RIV/RMaster/scripts/mac_native_scaffold_generator.py "Photos Editor" "com.company.photos" <web_dir> <output_dir>
@@ -150,6 +247,13 @@ The test verifies:
 - That contextual menus open with valid item labels.
 - That icon glyphs resolve properly against custom Segoe Fluent / MDL2 font files.
 - Generates high-resolution screenshots for visual regression auditing.
+- Samples rendered pixel grids to ensure views are not solid blank or transparent.
+
+### 5.2 Automated Tool: `webgl_export_auditor.py`
+Verify exported image files to guarantee they contain real rendered pixels:
+```bash
+python3 RIV/RMaster/scripts/webgl_export_auditor.py --verify-image <path_to_exported_file>
+```
 
 ---
 
