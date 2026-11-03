@@ -2,12 +2,11 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 APP_NAME="PhotosEditor.app"
 OUTPUT_DIR="${SCRIPT_DIR}/${APP_NAME}"
 APPLICATIONS_DIR="/Applications/Photos Editor.app"
 DMG_NAME="PhotosEditor.dmg"
-DMG_OUTPUT="${WORKSPACE_DIR}/${DMG_NAME}"
+DMG_OUTPUT="${SCRIPT_DIR}/${DMG_NAME}"
 
 echo "=========================================="
 echo " Building Native macOS Photos Editor App  "
@@ -51,7 +50,7 @@ codesign --force --deep --sign - "${APPLICATIONS_DIR}"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "${APPLICATIONS_DIR}"
 
 # Create root folder symlink for quick access
-cd "${WORKSPACE_DIR}"
+cd "${SCRIPT_DIR}"
 rm -f "Photos Editor.app"
 ln -sf "${APPLICATIONS_DIR}" "Photos Editor.app"
 
@@ -62,18 +61,17 @@ mkdir -p "${DMG_STAGE}"
 cp -R "${OUTPUT_DIR}" "${DMG_STAGE}/Photos Editor.app"
 ln -s /Applications "${DMG_STAGE}/Applications"
 
-rm -f "${DMG_OUTPUT}" "${SCRIPT_DIR}/${DMG_NAME}"
+rm -f "${DMG_OUTPUT}"
 hdiutil create -volname "Photos Editor" \
                -srcfolder "${DMG_STAGE}" \
                -ov -format UDZO \
                "${DMG_OUTPUT}"
 
-cp "${DMG_OUTPUT}" "${SCRIPT_DIR}/${DMG_NAME}"
 rm -rf "${DMG_STAGE}"
 
 echo "=========================================="
 echo " BUILD SUCCESSFUL!                        "
 echo " Installed App: ${APPLICATIONS_DIR}       "
-echo " Root App link: ${WORKSPACE_DIR}/Photos Editor.app "
+echo " Root App link: ${SCRIPT_DIR}/Photos Editor.app "
 echo " Installer DMG: ${DMG_OUTPUT}             "
 echo "=========================================="

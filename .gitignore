@@ -1,21 +1,26 @@
-# macOS
+# macOS system files
 .DS_Store
 .AppleDouble
 .LSOverride
 __pycache__/
 *.pyc
 
-# Large raw bundles and extraction scratchpads
-Photos_2026.*
+# Reverse engineering toolkit and extraction scratchpads (kept locally, not part of the macOS app repo)
+RIV/
+extracted_assets/
 extracted_bundle/
 extracted_x64/
-RIV/REA/
+Photos_2026.*
+*.Msixbundle
+*.appx
+*.msix
 
-# Build artifacts
-PhotoEditor_Mac/PhotosEditor_bin
-PhotoEditor_Mac/PhotosEditor.app
+# Build artifacts and binaries
+PhotosEditor_bin
+PhotosEditor.app
 Photos Editor.app
 PhotosEditor.dmg
-PhotoEditor_Mac/dmg_staging/
+dmg_staging/
+PhotoEditor_Mac/
 test_*
 *.tmp

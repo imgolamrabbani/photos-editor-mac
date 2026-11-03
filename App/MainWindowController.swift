@@ -63,9 +63,12 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
             indexURL = bundleWeb
         } else {
             let currentDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            let devURL = currentDir.appendingPathComponent("PhotoEditor_Mac/Web/index.html")
+            let devURL = currentDir.appendingPathComponent("Web/index.html")
+            let fallbackURL = currentDir.appendingPathComponent("PhotoEditor_Mac/Web/index.html")
             if FileManager.default.fileExists(atPath: devURL.path) {
                 indexURL = devURL
+            } else if FileManager.default.fileExists(atPath: fallbackURL.path) {
+                indexURL = fallbackURL
             }
         }
 

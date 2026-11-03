@@ -2,7 +2,7 @@
 
 A native macOS port and standalone desktop replica of the Windows 11 Photos application image editor.
 
-Extracted, reverse-engineered, and rebuilt from the Microsoft Photos MSIX bundle (`Photos_2026.11090.22001.0_neutral_~_8wekyb3d8bbwe.Msixbundle`) into a native macOS desktop application powered by Swift, AppKit, WebKit, WebGL, and WebAssembly.
+Extracted, reverse-engineered, and rebuilt from the Microsoft Photos MSIX package into a high-performance native macOS desktop application powered by Swift, AppKit, WebKit, WebGL, and WebAssembly.
 
 ---
 
@@ -72,6 +72,28 @@ Image decoding is handled by Apple ImageIO and `CGImageSource`, enabling hardwar
 
 ---
 
+## Project Structure
+
+```
+photos-editor-mac/
+├── App/
+│   ├── main.swift                 # Application entry point
+│   ├── AppDelegate.swift          # Lifecycle delegate, Dock click, and native menu bar
+│   └── MainWindowController.swift # NSWindowController, WKWebView host, image loader/saver
+├── Web/
+│   ├── index.html                 # Host bridge, theme adapter, and WebGL container
+│   ├── static/                    # React bundles, WebAssembly inpainting, workers, css
+│   ├── fonts/                     # Fluent and UI symbol web fonts
+│   └── cursors/                   # Pen and eraser cursor assets
+├── AppIcon.icns                   # High-resolution multi-size macOS application icon
+├── Info.plist                     # Document type associations and bundle configuration
+├── build.sh                       # Automated compile and DMG distribution build script
+├── .gitignore                     # Git ignore rules
+└── README.md                      # Project documentation
+```
+
+---
+
 ## Installation
 
 ### Method 1: Pre-built DMG Installer (Recommended)
@@ -107,11 +129,11 @@ git clone https://github.com/imgolamrabbani/photos-editor-mac.git
 cd photos-editor-mac
 
 # Compile application and assemble DMG
-./PhotoEditor_Mac/build.sh
+./build.sh
 ```
 
-The script performs the following tasks:
-1. Compiles the Swift source files (`main.swift`, `AppDelegate.swift`, `MainWindowController.swift`, `PhotoDocument.swift`) into an optimized binary.
+The build script performs the following tasks:
+1. Compiles the Swift source files (`main.swift`, `AppDelegate.swift`, `MainWindowController.swift`) into an optimized binary.
 2. Packages the `.app` bundle structure with `Info.plist`, `AppIcon.icns`, and the Web engine assets.
 3. Ad-hoc codesigns the application bundle.
 4. Installs the application to `/Applications/Photos Editor.app` and updates LaunchServices.
@@ -119,70 +141,27 @@ The script performs the following tasks:
 
 ---
 
-## Project Structure
+## Technical Architecture & Porting Solutions
 
-```
-photos-editor-mac/
-├── PhotoEditor_Mac/
-│   ├── App/
-│   │   ├── main.swift                 # Entry point wiring NSApplication and controllers
-│   │   ├── AppDelegate.swift          # Lifecycle delegate, Dock click, and native menu bar
-│   │   ├── MainWindowController.swift # NSWindowController, WKWebView host, image loader/saver
-│   │   └── PhotoDocument.swift        # NSDocument and custom PhotoDocumentController
-│   ├── Web/
-│   │   ├── index.html                 # Host bridge, theme adapter, and WebGL container
-│   │   └── static/
-│   │       ├── js/                    # React bundles, WebAssembly inpainting, workers
-│   │       └── css/                   # Fluent design and layout styling
-│   ├── AppIcon.icns                   # High-resolution multi-size macOS application icon
-│   ├── Info.plist                     # Document type associations and bundle configuration
-│   └── build.sh                       # Automated compile and DMG distribution build script
-├── extracted_assets/
-│   ├── fonts/                         # Fabric and Photos icon symbol fonts
-│   ├── icons/                         # SVG and PNG UI icons
-│   ├── schemas/                       # Database and metadata schemas
-│   └── shaders/                       # Tone-mapping and ACES filmic HLSL shaders
-├── PhotosEditor.dmg                   # Standalone distribution disk image
-└── README.md                          # Project documentation
-```
-
----
-
-## Technical Highlights
-
-### Bypassing AppKit Document Type Failures
-When non-document macOS applications register `CFBundleDocumentTypes`, standard AppKit `NSDocumentController` attempts to map file uniform type identifiers (UTIs) to an `NSDocument` class. When this resolution fails, AppKit produces a blocking modal alert:
-`The document could not be opened. App cannot open files in the format.`
-
-This project resolves this issue by subclassing `NSDocumentController` into `PhotoDocumentController`:
+### 1. Document Routing without NSDocumentClass
+In single-window hybrid macOS apps, declaring `<key>NSDocumentClass</key>` in `Info.plist` without a true Cocoa multi-document model causes `NSDocumentController` to intercept opens and generate modal errors: *"Photos Editor cannot open files in the 'Image File' format"*.
+This project eliminates `NSDocumentClass` entirely, registers system UTIs (`public.image`, `public.jpeg`, `public.png`, `public.heic`, etc.) in `CFBundleDocumentTypes`, and handles file opening directly through `NSApplicationDelegate`:
 ```swift
-@objc(PhotoDocumentController)
-class PhotoDocumentController: NSDocumentController {
-    override func documentClass(forType typeName: String) -> AnyClass? {
-        return PhotoDocument.self
-    }
-
-    override func openDocument(withContentsOf url: URL, display displayDocument: Bool, completionHandler: @escaping (NSDocument?, Bool, Error?) -> Void) {
-        AppDelegate.shared?.openImageURL(url)
-        completionHandler(nil, true, nil)
-    }
+func application(_ application: NSApplication, open urls: [URL]) {
+    guard let first = urls.first else { return }
+    mainWindowController?.loadFile(from: first)
 }
 ```
-Instantiating `PhotoDocumentController` prior to `NSApplicationMain` intercepts incoming LaunchServices AppleEvents (`'odoc'`), passes the image URL directly to the window controller, and signals completion with `error: nil`.
 
-### Safe Host Object Bridge
-The original Windows editor expects a Chromium WebView2 `hostObjects.sync` interface. On macOS, this is emulated using a JavaScript `Proxy` bridge:
-```javascript
-window.hvcEvents = new Proxy(hvcEventsTarget, {
-    get(target, prop) {
-        if (prop in target) return target[prop];
-        return function(...args) {
-            console.log(`[MacBridge] Stubbed hvcEvents.${String(prop)} called:`, ...args);
-        };
-    }
-});
-```
-This guarantees that host protocol calls do not throw undefined property exceptions during component render cycles.
+### 2. WebGL Drawing Buffer Invalidation & 2D Canvas Handover
+In WebGL2, `preserveDrawingBuffer: false` clears the canvas backbuffer to `(0, 0, 0, 0)` immediately after each display swap. Calling `canvas.toDataURL()` on the live canvas results in a completely blank image.
+The port resolves this by extracting rendered pixel buffers from the Babylon tile renderer and blitting them to an offscreen 2D canvas via `createImageData`/`putImageData`, which preserves pixel data for lossless export.
+
+### 3. WebKit Background RAF Throttling
+WebKit aggressively throttles `requestAnimationFrame` when the window is not continuously animating or during modal sheet presentations (such as `NSSavePanel`). Offscreen tile rendering loops are patched to use `setTimeout(..., 0)`, guaranteeing unthrottled execution.
+
+### 4. Direct Local File Streaming
+`evaluateJavaScript` has strict IPC buffer limits (~8-16 MB) that silently drop or truncate large base64 image strings. The host allows root directory access (`allowingReadAccessTo: URL(fileURLWithPath: "/")`) and streams local files directly into WebGL textures via `file://` URLs, supporting multi-hundred-megabyte high-resolution images.
 
 ---
 
