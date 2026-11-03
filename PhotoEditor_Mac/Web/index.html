@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <script>
-window.__capturedErrors = [];
+window.__capturedErrors = []; window.__capturedLogs = []; const _origConsoleLog = console.log; console.log = function(...args) { window.__capturedLogs.push(args.join(" ")); _origConsoleLog.apply(console, args); };
 const _origConsoleError = console.error;
 console.error = function(...args) {
     window.__capturedErrors.push(args.map(a => String(a && a.stack ? a.stack : (typeof a === "object" ? JSON.stringify(a) : a))).join(" "));
@@ -217,32 +217,7 @@ window.addEventListener("unhandledrejection", function(e) {
       notifyOnUserSave: function(e, bytesLen, a, l) {
         const saveCode = (typeof e === 'number') ? e : 1;
         window._lastSaveType = saveCode;
-        const saveTypeStr = (saveCode === 2) ? 'copyClipboard' : ((saveCode === 0) ? 'saveOriginal' : 'saveAsCopy');
-        console.log('[MacBridge] notifyOnUserSave requested. SaveType:', saveTypeStr);
-
-        // Instant direct WebGL canvas export (zero delay, accurate, preserves all edits)
-        const canvas = document.querySelector('canvas');
-        if (canvas) {
-          try {
-            const dataUrl = canvas.toDataURL('image/png');
-            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
-              window.webkit.messageHandlers.macHost.postMessage({
-                action: 'saveImage',
-                saveType: saveTypeStr,
-                fileName: window._currentFileName,
-                dataUrl: dataUrl,
-                width: canvas.width,
-                height: canvas.height
-              });
-              console.log('[MacBridge] Successfully sent saveImage to native macOS host');
-              return;
-            }
-          } catch(err) {
-            console.warn('[MacBridge] Direct canvas export failed, attempting buffer fallback:', err);
-          }
-        }
-
-        // Buffer pipeline fallback
+        console.log('[MacBridge] notifyOnUserSave requested. SaveCode:', saveCode, 'bytesLen:', bytesLen);
         window._requestEditedBufferAndSave(bytesLen);
       },
       notifyOnUserClose: function() {
@@ -268,9 +243,11 @@ window.addEventListener("unhandledrejection", function(e) {
       },
       notifyOnEditedImageReady: function(width, height) {
         console.log('[MacBridge] notifyOnEditedImageReady:', width, height);
-        if (window._pendingSaveBuffer) {
-          window._processSavedPixels(window._pendingSaveBuffer, width, height);
+        const pixelData = window._lastEditedPixels || window._pendingSaveBuffer;
+        if (pixelData) {
+          window._processSavedPixels(pixelData, width, height);
           window._pendingSaveBuffer = null;
+          window._lastEditedPixels = null;
         }
       },
       notifyOnEditorActivityChanged: function(activity) {
@@ -407,7 +384,16 @@ window.addEventListener("unhandledrejection", function(e) {
         const ctx = canvas.getContext('2d');
         
         const expectedBytes = width * height * 4;
-        const clamped = new Uint8ClampedArray(buffer, 0, Math.min(buffer.byteLength, expectedBytes));
+        let clamped;
+        if (buffer instanceof Uint8ClampedArray) {
+          clamped = (buffer.byteLength >= expectedBytes) ? buffer.subarray(0, expectedBytes) : buffer;
+        } else if (buffer instanceof Uint8Array) {
+          clamped = new Uint8ClampedArray(buffer.buffer, buffer.byteOffset, Math.min(buffer.byteLength, expectedBytes));
+        } else if (buffer instanceof ArrayBuffer) {
+          clamped = new Uint8ClampedArray(buffer, 0, Math.min(buffer.byteLength, expectedBytes));
+        } else {
+          clamped = new Uint8ClampedArray(buffer, 0, expectedBytes);
+        }
         const imgData = new ImageData(clamped, width, height);
         ctx.putImageData(imgData, 0, 0);
 

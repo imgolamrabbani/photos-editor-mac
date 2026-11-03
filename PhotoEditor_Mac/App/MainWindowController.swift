@@ -220,7 +220,17 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
 
         if !isCopy, let currentURL = currentLoadedFileURL {
             do {
-                try imageData.write(to: currentURL, options: .atomic)
+                let ext = currentURL.pathExtension.lowercased()
+                var finalData = imageData
+                if ext == "jpg" || ext == "jpeg" {
+                    if let image = NSImage(data: imageData),
+                       let tiff = image.tiffRepresentation,
+                       let rep = NSBitmapImageRep(data: tiff),
+                       let jpg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+                        finalData = jpg
+                    }
+                }
+                try finalData.write(to: currentURL, options: .atomic)
                 showSaveNotification(fileName: currentURL.lastPathComponent)
             } catch {
                 showAlert(title: "Save Failed", message: error.localizedDescription)
@@ -252,7 +262,17 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
                 guard let self = self else { return }
                 if response == .OK, let targetURL = savePanel.url {
                     do {
-                        try imageData.write(to: targetURL, options: .atomic)
+                        let ext = targetURL.pathExtension.lowercased()
+                        var finalData = imageData
+                        if ext == "jpg" || ext == "jpeg" {
+                            if let image = NSImage(data: imageData),
+                               let tiff = image.tiffRepresentation,
+                               let rep = NSBitmapImageRep(data: tiff),
+                               let jpg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+                                finalData = jpg
+                            }
+                        }
+                        try finalData.write(to: targetURL, options: .atomic)
                         self.currentLoadedFileURL = targetURL
                         self.window?.title = "\(targetURL.lastPathComponent) — Photos Editor"
                         self.window?.representedURL = targetURL
