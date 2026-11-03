@@ -105,6 +105,12 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
         switch action {
         case "editorReady":
             isEditorReady = true
+            if let locURL = Bundle.main.url(forResource: "localization_en", withExtension: "json", subdirectory: "Web"),
+               let locData = try? Data(contentsOf: locURL),
+               let locStr = String(data: locData, encoding: .utf8) {
+                let js = "if (typeof window.setLocalizationJson === 'function') { window.setLocalizationJson(JSON.stringify({ strings: \(locStr), locales: ['en-US'] })); }"
+                self.webView.evaluateJavaScript(js, completionHandler: nil)
+            }
             while !pendingLoadURLs.isEmpty {
                 let next = pendingLoadURLs.removeFirst()
                 loadImage(from: next)
@@ -187,7 +193,20 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
             return
         }
 
-        if !isSaveAsCopy, let currentURL = currentLoadedFileURL {
+        let saveType = body["saveType"] as? String
+
+        if saveType == "copyClipboard" {
+            if let image = NSImage(data: imageData) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.writeObjects([image])
+                showSaveNotification(fileName: "Photo copied to clipboard")
+            }
+            return
+        }
+
+        let isCopy = isSaveAsCopy || (saveType == "saveAsCopy")
+
+        if !isCopy, let currentURL = currentLoadedFileURL {
             do {
                 try imageData.write(to: currentURL, options: .atomic)
                 showSaveNotification(fileName: currentURL.lastPathComponent)
@@ -202,7 +221,7 @@ class MainWindowController: NSWindowController, NSWindowDelegate, WKScriptMessag
             let defaultName: String
             if let cur = currentLoadedFileURL {
                 let base = cur.deletingPathExtension().lastPathComponent
-                defaultName = "\(base)_edited.png"
+                defaultName = "\(base)_copy.png"
             } else {
                 defaultName = "EditedPhoto.png"
             }

@@ -157,6 +157,7 @@ window.addEventListener("unhandledrejection", function(e) {
     window._currentFileName = "photo.png";
     window._currentImageDimensions = { width: 0, height: 0 };
     window._pendingSaveBuffer = null;
+    window._lastSaveType = 1; // 0: Save (original), 1: SaveAsCopy, 2: CopyToClipboard
 
     // Emulate Windows WebView2 Shared Buffer Dispatcher
     window.chrome = {
@@ -177,12 +178,24 @@ window.addEventListener("unhandledrejection", function(e) {
     window.hvcEvents = {
       notifyOnReady: function() {
         console.log('[MacBridge] Photos Image Editor Ready');
+        if (typeof window.setLocalizationJson === 'function' && window.__PHOTOS_EDITOR_LOCALIZATION__) {
+          try {
+            window.setLocalizationJson(JSON.stringify({
+              strings: window.__PHOTOS_EDITOR_LOCALIZATION__,
+              locales: ['en-US']
+            }));
+            console.log('[MacBridge] Injected 525 English localization strings');
+          } catch(err) {
+            console.error('[MacBridge] Failed to setLocalizationJson:', err);
+          }
+        }
         if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
           window.webkit.messageHandlers.macHost.postMessage({ action: 'editorReady' });
         }
       },
       notifyOnUserSave: function(e, bytesLen, a, l) {
-        console.log('[MacBridge] notifyOnUserSave requested. Requesting edited pixel buffer...');
+        console.log('[MacBridge] notifyOnUserSave requested. SaveType:', e);
+        window._lastSaveType = (typeof e === 'number') ? e : 1;
         window._requestEditedBufferAndSave();
       },
       notifyOnUserClose: function() {
@@ -311,7 +324,9 @@ window.addEventListener("unhandledrejection", function(e) {
 
     // Save Pixels to File (Native Mac Host or Web Download)
     window._processSavedPixels = function(buffer, width, height) {
-      console.log(`[MacBridge] Saving ${width}x${height} image...`);
+      const saveTypeStr = (window._lastSaveType === 2) ? 'copyClipboard' : ((window._lastSaveType === 0) ? 'saveOriginal' : 'saveAsCopy');
+      console.log(`[MacBridge] Saving ${width}x${height} image with saveType:`, saveTypeStr);
+
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -320,11 +335,23 @@ window.addEventListener("unhandledrejection", function(e) {
       const imgData = new ImageData(clamped, width, height);
       ctx.putImageData(imgData, 0, 0);
 
+      // Web API Clipboard support
+      if (window._lastSaveType === 2) {
+        try {
+          canvas.toBlob(function(blob) {
+            if (blob && navigator.clipboard && navigator.clipboard.write) {
+              navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).catch(e => console.log('Clipboard web API note:', e));
+            }
+          }, 'image/png');
+        } catch(e) {}
+      }
+
       // If running inside native macOS WKWebView host
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.macHost) {
         const dataUrl = canvas.toDataURL('image/png');
         window.webkit.messageHandlers.macHost.postMessage({
           action: 'saveImage',
+          saveType: saveTypeStr,
           fileName: window._currentFileName,
           dataUrl: dataUrl,
           width: width,
@@ -332,13 +359,18 @@ window.addEventListener("unhandledrejection", function(e) {
         });
       } else {
         // Fallback for standalone browser use
+        if (window._lastSaveType === 2) {
+          alert('Photo copied to clipboard');
+          return;
+        }
         canvas.toBlob(function(blob) {
           const a = document.createElement('a');
           const url = URL.createObjectURL(blob);
           a.href = url;
           const ext = window._currentFileName.substring(window._currentFileName.lastIndexOf('.')) || '.png';
           const base = window._currentFileName.replace(/\.[^/.]+$/, "");
-          a.download = `${base}_edited${ext}`;
+          const suffix = (window._lastSaveType === 0) ? '' : '_copy';
+          a.download = `${base}${suffix}${ext}`;
           document.body.appendChild(a);
           a.click();
           setTimeout(() => {
@@ -359,6 +391,7 @@ window.addEventListener("unhandledrejection", function(e) {
     };
   </script>
 
+  <script src="./localization_en.js"></script>
   <script defer="defer" src="./static/js/main.js"></script>
   <link href="./static/css/main.css" rel="stylesheet"/>
 </head>
